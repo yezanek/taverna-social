@@ -1,0 +1,62 @@
+# cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+
+[licenses]
+# Taverna is AGPL-3.0. All dependencies must be compatible.
+# AGPL-3.0 is compatible with: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause,
+# ISC, Unlicense, CC0-1.0, and other permissive licenses.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unlicense",
+    "CC0-1.0",
+    "MPL-2.0",          # weak copyleft, compatible when used as a library
+    "AGPL-3.0",         # our own license and activitypub_federation
+    "LGPL-2.0",
+    "LGPL-2.1",
+    "LGPL-3.0",
+    "OpenSSL",
+    "Zlib",
+    "Unicode-DFS-2016",
+]
+
+# Fail on any license not in the allow list
+unlicensed = "deny"
+copyleft = "warn"       # warn on copyleft other than AGPL/LGPL (already in allow)
+allow-osi-fsf-free = "neither"
+default = "deny"
+confidence-threshold = 0.8
+
+exceptions = [
+    # ring uses a custom OpenSSL-derived license — safe for our use
+    { allow = ["OpenSSL"], name = "ring" },
+]
+
+[bans]
+# Deny duplicate versions of these critical crates
+multiple-versions = "warn"
+deny = [
+    # Never allow these in any build
+    { name = "openssl-sys", reason = "Use rustls instead — openssl-sys is a C dependency" },
+]
+
+# Crates we intentionally use and want to make explicit
+allow = []
+
+skip = []
+skip-tree = []
+
+[advisories]
+# Fail on any known security vulnerability
+version = 2
+ignore = []
+
+[sources]
+# Only allow crates.io as a source (no git deps in production)
+unknown-registry = "deny"
+unknown-git = "warn"   # warn rather than deny — some dev deps may use git
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
