@@ -18,17 +18,20 @@ opencode writes the code. gemini-cli reviews, verifies, and flags issues.
 
 ## Installing gemini-cli
 
-Enter the Nix dev shell (see README.md for `flake.nix`, which includes `nodejs_22`):
-
 ```bash
-nix develop
+# Node.js (if not already installed)
+sudo apt install -y nodejs npm
+
+# gemini-cli
 npm install -g @google/gemini-cli
 gemini auth
 ```
 
-Or, if gemini-cli is packaged in nixpkgs:
+Or via Linuxbrew if you use it:
 ```bash
-nix-env -iA nixpkgs.gemini-cli
+brew install node
+npm install -g @google/gemini-cli
+gemini auth
 ```
 
 Use the most capable available model for review work:

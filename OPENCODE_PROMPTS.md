@@ -16,16 +16,17 @@ For the QA workflow using gemini-cli, see GEMINI.md.
 
 ## Before You Start
 
-Enter the Nix dev shell from the project root (see README.md for `flake.nix`):
-
 ```bash
-nix develop
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 
-# First time only — install Loco and SeaORM CLIs
+# Loco and SeaORM CLIs
 cargo install loco-cli sea-orm-cli
 
-# PostgreSQL should be running via NixOS services.postgresql
-# pgmq: as postgres superuser: CREATE EXTENSION IF NOT EXISTS pgmq;
+# PostgreSQL 16 and pgmq — see README.md Prerequisites section
+# Databases must exist before Phase 1:
+createdb taverna_development && createdb taverna_test
 ```
 
 ---
@@ -41,11 +42,7 @@ Taverna must be AGPL-3.0 as a result.
 ## Installing and Configuring opencode
 
 ```bash
-# Via Nix
-nix-env -iA nixpkgs.opencode
-
-# Or if not yet in nixpkgs, inside your nix develop shell:
-# check opencode's repo for a Nix flake option
+curl -fsSL https://opencode.ai/install | bash
 ```
 
 Configure your AI provider. opencode works with Anthropic, OpenAI, Google, and others.

@@ -102,144 +102,129 @@ Inside opencode, these commands are available once you open the project director
 
 ---
 
-## Prerequisites (NixOS)
+## Prerequisites (LMDE / Debian)
 
-Everything is available through Nix. No curl installers, no Homebrew, no npm globals.
-
-### Nix shell (quick start)
-
-Create a `shell.nix` in the project root:
-
-```nix
-{ pkgs ? import <nixpkgs> {} }:
-
-pkgs.mkShell {
-  buildInputs = with pkgs; [
-    # Rust
-    rustup
-
-    # Loco and SeaORM CLIs (installed via cargo below)
-    cargo
-
-    # PostgreSQL 16
-    postgresql_16
-
-    # pgmq (built from source via cargo-pgmq or installed as a PG extension)
-    # See: https://github.com/tembo-io/pgmq — install the extension into your PG data dir
-
-    # AI tools
-    opencode        # opencode.ai — if not yet in nixpkgs, use the flake below
-    gemini-cli      # google gemini CLI
-
-    # Node (only needed for gemini-cli if not yet packaged natively)
-    nodejs_22
-  ];
-
-  shellHook = ''
-    export DATABASE_URL="postgres://localhost/taverna_development"
-    export BASE_URL="http://localhost:3000"
-    export TAVERNA_DOMAIN="localhost"
-    # Generate once and add to your .env:
-    # export JWT_SECRET=$(openssl rand -hex 32)
-  '';
-}
-```
-
-Then:
-```bash
-nix-shell
-cargo install loco-cli sea-orm-cli   # first time only
-```
-
-### Nix flake (recommended)
-
-Create `flake.nix` in the project root:
-
-```nix
-{
-  description = "Taverna — federated community platform";
-
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    rust-overlay.url = "github:oxalica/rust-overlay";
-    flake-utils.url = "github:numtide/flake-utils";
-  };
-
-  outputs = { self, nixpkgs, rust-overlay, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs { inherit system overlays; };
-        rust = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" "rust-analyzer" ];
-        };
-      in {
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            rust
-            postgresql_16
-            openssl
-            pkg-config
-            nodejs_22      # for gemini-cli until native package is available
-          ];
-
-          shellHook = ''
-            export DATABASE_URL="postgres://localhost/taverna_development"
-            export BASE_URL="http://localhost:3000"
-            export TAVERNA_DOMAIN="localhost"
-            export RUST_LOG="info"
-            export PKG_CONFIG_PATH="${pkgs.openssl.dev}/lib/pkgconfig"
-
-            echo "Taverna dev shell ready."
-            echo "Run: cargo install loco-cli sea-orm-cli  (first time only)"
-          '';
-        };
-      }
-    );
-}
-```
+### Rust
 
 ```bash
-nix develop          # enter the dev shell
-cargo install loco-cli sea-orm-cli   # first time only
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 ```
 
-### Installing opencode and gemini-cli via Nix
+### Loco and SeaORM CLIs
 
 ```bash
-# opencode — check nixpkgs first
-nix-env -iA nixpkgs.opencode
+cargo install loco-cli sea-orm-cli
+```
 
-# If not yet in nixpkgs, install via the official installer inside a nix-shell
-# that has curl available, or use the flake from opencode's repo directly
+### PostgreSQL 16
 
-# gemini-cli — via Node in the flake shell above
+LMDE ships an older PostgreSQL. Add the official PGDG apt repository to get 16:
+
+```bash
+sudo apt install -y curl ca-certificates
+sudo install -d /usr/share/postgresql-common/pgdg
+sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+  --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+  https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+  > /etc/apt/sources.list.d/pgdg.list'
+sudo apt update && sudo apt install -y postgresql-16
+sudo systemctl enable --now postgresql
+```
+
+Create the development database:
+
+```bash
+sudo -u postgres createuser --superuser $USER
+createdb taverna_development
+createdb taverna_test
+```
+
+### pgmq
+
+pgmq is a PostgreSQL extension not yet in apt. Build it from source using `pgrx`:
+
+```bash
+# Install build dependencies
+sudo apt install -y build-essential libclang-dev postgresql-server-dev-16
+
+# Install pgrx and build pgmq
+cargo install --locked cargo-pgrx
+cargo pgrx init --pg16 $(which pg_config)
+git clone https://github.com/tembo-io/pgmq.git && cd pgmq
+cargo pgrx install --pg-config $(which pg_config)
+
+# Enable the extension
+psql -d taverna_development -c "CREATE EXTENSION IF NOT EXISTS pgmq;"
+```
+
+### opencode
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+### gemini-cli
+
+gemini-cli requires Node.js:
+
+```bash
+sudo apt install -y nodejs npm
 npm install -g @google/gemini-cli
 gemini auth
 ```
 
-### PostgreSQL on NixOS
+---
 
-Add to your `configuration.nix`:
+### Alternative: Homebrew on Linux
+
+If you prefer Linuxbrew for managing dev tools independently of apt:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> ~/.bashrc
+source ~/.bashrc
+
+brew install node
+npm install -g @google/gemini-cli
+# opencode via brew if packaged, otherwise use the curl installer above
+```
+
+### Alternative: Nix with home-manager
+
+If you want reproducible tool versions without touching system packages:
+
+```bash
+# Install Nix (standalone, does not require NixOS)
+sh <(curl -L https://nixos.org/nix/install) --daemon
+
+# Install home-manager
+nix-channel --add https://github.com/nix-community/home-manager/archive/master.tar.gz home-manager
+nix-channel --update
+nix-shell '<home-manager>' -A install
+```
+
+Add to `~/.config/home-manager/home.nix`:
 
 ```nix
-services.postgresql = {
-  enable = true;
-  package = pkgs.postgresql_16;
-  ensureDatabases = [ "taverna_development" "taverna_test" ];
-  ensureUsers = [{
-    name = "taverna";
-    ensureDBOwnership = true;
-  }];
-};
+{ config, pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    rustup
+    nodejs_22
+    opencode      # if packaged; otherwise use the curl installer
+  ];
+}
 ```
 
-For pgmq, install the extension after PostgreSQL is running:
 ```bash
-# As the postgres superuser:
-psql -U postgres -c "CREATE EXTENSION IF NOT EXISTS pgmq;"
-# See https://github.com/tembo-io/pgmq for NixOS-specific packaging
+home-manager switch
+cargo install loco-cli sea-orm-cli   # still needed via cargo
+npm install -g @google/gemini-cli
 ```
+
+PostgreSQL itself is best left to the system (`apt`) rather than home-manager, since it needs to run as a daemon and manage data directories.
 
 ---
 
