@@ -88,8 +88,8 @@ jobs:
           sudo apt-get install -y postgresql-server-dev-16 libclang-dev
           cargo install --locked cargo-pgrx --version 0.18.0
           cargo pgrx init --pg16 $(which pg_config)
-          git clone --depth 1 --branch v1.11.1 https://github.com/tembo-io/pgmq.git /tmp/pgmq
-          cd /tmp/pgmq && cargo pgrx install --pg-config $(which pg_config)
+          git clone --depth 1 https://github.com/tembo-io/pgmq.git /tmp/pgmq
+          cd /tmp/pgmq && git checkout 885251cf4dcb4853d7fa253f56e382d84d5f0821 && cargo pgrx install --pg-config $(which pg_config)
 
           # Copy extension files into the PostgreSQL service container
           PG_CONTAINER="${{ job.services.postgres.id }}"
@@ -104,7 +104,7 @@ jobs:
             -c "CREATE EXTENSION IF NOT EXISTS pgmq;"
 
       - name: Install sea-orm-cli
-        run: cargo install sea-orm-cli --locked
+        run: cargo install sea-orm-cli --version 1.1.1 --locked
 
       - name: Run migrations
         run: cargo loco db migrate
