@@ -30,8 +30,7 @@ impl MigrationTrait for Migration {
               created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
               updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
-            CREATE INDEX idx_users_username ON users(username);
-            CREATE INDEX idx_users_ap_id ON users(ap_id);
+
             "#,
         )
         .await?;

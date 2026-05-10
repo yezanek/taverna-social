@@ -38,7 +38,8 @@ impl MigrationTrait for Migration {
               ap_id         TEXT UNIQUE NOT NULL,
               post_id       UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
               author_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-              parent_id     UUID REFERENCES comments(id) ON DELETE CASCADE,
+              parent_id     UUID,
+              UNIQUE (id, post_id),
               path          LTREE NOT NULL,
               body          TEXT NOT NULL,
               score         INT NOT NULL DEFAULT 0,
@@ -48,6 +49,7 @@ impl MigrationTrait for Migration {
               created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
               updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            ALTER TABLE comments ADD FOREIGN KEY (parent_id, post_id) REFERENCES comments(id, post_id) ON DELETE CASCADE;
             CREATE INDEX idx_comments_post_id ON comments(post_id);
             CREATE INDEX idx_comments_path ON comments USING GIST(path);
             "#,

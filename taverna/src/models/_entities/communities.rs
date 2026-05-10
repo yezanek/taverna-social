@@ -19,6 +19,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub public_key: String,
     #[sea_orm(column_type = "Text", nullable)]
+    #[serde(skip_serializing)]
     pub private_key: Option<String>,
     #[sea_orm(column_type = "Text")]
     pub inbox_url: String,

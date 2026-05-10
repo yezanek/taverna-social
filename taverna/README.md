@@ -3,7 +3,7 @@
 [Loco](https://loco.rs) is a web and API framework running on Rust.
 
 This is the **SaaS starter** which includes a `User` model and authentication based on JWT.
-It also include configuration sections that help you pick either a frontend or a server-side template set up for your fullstack server.
+It also includes configuration sections that help you pick either a frontend or a server-side template set up for your fullstack server.
 
 
 ## Prerequisites
@@ -24,7 +24,7 @@ cargo loco start
 ```sh
 $ cargo loco start
 Finished dev [unoptimized + debuginfo] target(s) in 21.63s
-    Running `target/debug/myapp start`
+    Running `target/debug/taverna start`
 
     :
     :

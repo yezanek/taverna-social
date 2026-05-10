@@ -40,7 +40,7 @@ database:
   dangerously_recreate: true
 
 taverna:
-  base_url: "http://localhost:3000"
+  base_url: "http://localhost:5150"
   federation:
     enabled: false
     blocked_domains: []
