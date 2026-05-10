@@ -7,6 +7,9 @@ on:
     branches: [main, develop]
 
 # Cancel in-progress runs on the same branch to save minutes
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -80,10 +83,22 @@ jobs:
         run: |
           sudo apt-get install -y postgresql-server-dev-16 libclang-dev
           cargo install --locked cargo-pgrx --version 0.18.0
-          cargo pgrx init --pg16 $(which pg_config) 2>/dev/null || true
-          git clone --depth 1 https://github.com/tembo-io/pgmq.git /tmp/pgmq
+          cargo pgrx init --pg16 $(which pg_config)
+          git clone --depth 1 --branch v1.11.1 https://github.com/tembo-io/pgmq.git /tmp/pgmq
           cd /tmp/pgmq && cargo pgrx install --pg-config $(which pg_config)
-          PGPASSWORD=taverna psql -h localhost -U taverna -d taverna_test \
+
+          # Copy extension files into the PostgreSQL service container
+          PG_CONTAINER=$(docker ps --filter "label=com.docker.compose.service=postgres" --format "{{.ID}}")
+          if [ -z "$PG_CONTAINER" ]; then
+            echo "::error::Could not find postgres service container"
+            exit 1
+          fi
+          docker cp "$(pg_config --pkglibdir)/pgmq.so" "$PG_CONTAINER:$(pg_config --pkglibdir)/"
+          docker cp "$(pg_config --sharedir)/extension/pgmq.control" "$PG_CONTAINER:$(pg_config --sharedir)/extension/"
+          for f in "$(pg_config --sharedir)/extension"/pgmq--*.sql; do
+            docker cp "$f" "$PG_CONTAINER:$(pg_config --sharedir)/extension/"
+          done
+          docker exec "$PG_CONTAINER" psql -U taverna -d taverna_test \
             -c "CREATE EXTENSION IF NOT EXISTS pgmq;"
 
       - name: Install sea-orm-cli
