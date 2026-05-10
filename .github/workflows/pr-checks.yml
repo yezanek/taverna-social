@@ -1,0 +1,181 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── PR title follows Conventional Commits ────────────────────────────────
+  pr-title:
+    name: PR Title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            chore
+            refactor
+            test
+            perf
+            ci
+            build
+          # Require scope for feat and fix
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" found in the pull request title "{title}"
+            didn't match the expected pattern. Please ensure that the subject
+            starts with a lowercase letter.
+
+  # ── Scan for common Rust mistakes ────────────────────────────────────────
+  rust-scan:
+    name: Rust Code Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for unwrap() in production code
+        run: |
+          # Allow unwrap in tests and build.rs, flag everywhere else
+          FOUND=$(grep -rn "\.unwrap()" src/ \
+            --include="*.rs" \
+            | grep -v "#\[cfg(test)\]" \
+            | grep -v "mod tests" \
+            | grep -v "// unwrap-ok" \
+            || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Found .unwrap() in production code. Use ? or expect() with a message instead."
+            echo "$FOUND"
+            exit 1
+          fi
+
+      - name: Check for todo!/unimplemented! macros
+        run: |
+          FOUND=$(grep -rEn "todo!|unimplemented!|panic!(\(|\b)" src/ \
+            --include="*.rs" \
+            | grep -v "#\[cfg(test)\]" \
+            | grep -v "mod tests" \
+            | grep -v "// panic-ok" \
+            || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Found todo!/unimplemented!/panic! in production code."
+            echo "$FOUND"
+            exit 1
+          fi
+
+      - name: Check for dbg! macros (debug leftovers)
+        run: |
+          FOUND=$(grep -rn "dbg!(" src/ --include="*.rs" || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Found dbg!() macro — remove before merging."
+            echo "$FOUND"
+            exit 1
+          fi
+
+      - name: Check for hardcoded secrets patterns
+        run: |
+          FOUND=$(grep -rn \
+            -e "password\s*=\s*\"[^\"]\+" \
+            -e "secret\s*=\s*\"[^\"]\+" \
+            -e "api_key\s*=\s*\"[^\"]\+" \
+            src/ --include="*.rs" \
+            | grep -v "test\|spec\|mock\|example\|placeholder" \
+            || true)
+          if [ -n "$FOUND" ]; then
+            echo "::warning::Possible hardcoded secret found — please review."
+            echo "$FOUND"
+          fi
+
+      - name: Check for direct reqwest usage in federation code
+        # The activitypub_federation crate manages all federation HTTP.
+        # Raw reqwest calls in federation/ bypass signature handling.
+        run: |
+          FOUND=$(grep -rn "reqwest::" src/federation/ src/controllers/federation/ \
+            --include="*.rs" 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Found raw reqwest usage in federation code."
+            echo "Use SendActivityTask::send() or ObjectId::dereference() instead."
+            echo "$FOUND"
+            exit 1
+          fi
+
+      - name: Check for manual HTTP signature code
+        # Signing must go through the activitypub_federation crate, not rsa/sha2 directly.
+        run: |
+          FOUND=$(grep -rn "use rsa::\|use sha2::\|HmacSha256\|RsaPrivateKey" \
+            src/federation/ src/controllers/federation/ \
+            --include="*.rs" 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Found manual HTTP signature code in federation modules."
+            echo "Use the activitypub_federation crate — it handles signing automatically."
+            echo "$FOUND"
+            exit 1
+          fi
+
+      - name: Check for hardcoded colours in templates
+        # All colours must use CSS custom properties (var(--...)), not hex values.
+        run: |
+          FOUND=$(grep -rn \
+            -e "#[0-9a-fA-F]\{3,6\}" \
+            -e "rgb(" \
+            -e "rgba(" \
+            views/ --include="*.html" 2>/dev/null \
+            | grep -v "theme.css\|<!--" \
+            || true)
+          if [ -n "$FOUND" ]; then
+            echo "::warning::Hardcoded colour values found in templates."
+            echo "Use CSS custom properties (var(--bg-primary) etc.) instead."
+            echo "$FOUND"
+          fi
+
+      - name: Check for | safe filter on non-markdown content
+        # Only pre-sanitized markdown HTML may use | safe in Tera templates.
+        run: |
+          FOUND=$(grep -rn "| safe" views/ --include="*.html" 2>/dev/null \
+            | grep -v "rendered_\|markdown_\|body_html\|content_html" \
+            || true)
+          if [ -n "$FOUND" ]; then
+            echo "::warning::Possible unsafe template filter usage. Verify these are pre-sanitized."
+            echo "$FOUND"
+          fi
+
+  # ── Dependency audit ─────────────────────────────────────────────────────
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Check Cargo.lock is committed and up to date ─────────────────────────
+  lockfile:
+    name: Lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check Cargo.lock is up to date
+        run: cargo update --locked 2>&1 | grep -v "^$"
+      - name: Verify Cargo.lock is committed
+        run: |
+          if [ ! -f Cargo.lock ]; then
+            echo "::error::Cargo.lock is not committed. Add it to version control."
+            exit 1
+          fi

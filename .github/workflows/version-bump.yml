@@ -1,0 +1,117 @@
+name: Version Bump
+
+on:
+  push:
+    branches: [main]
+    # Only run when actual source changes, not just docs or CI config
+    paths:
+      - 'src/**'
+      - 'migration/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+  # Also allow manual trigger with choice of bump type
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: version-bump
+  cancel-in-progress: false   # never cancel a version bump mid-run
+
+jobs:
+  bump:
+    name: Bump Version
+    runs-on: ubuntu-latest
+    # Only run on direct pushes to main, not from other workflows
+    if: github.actor != 'github-actions[bot]'
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get current version
+        id: current
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Calculate next version
+        id: next
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          BUMP="${{ github.event.inputs.bump || 'patch' }}"
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          case "$BUMP" in
+            major) NEXT="$((MAJOR + 1)).0.0" ;;
+            minor) NEXT="${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+          esac
+
+          echo "version=$NEXT" >> $GITHUB_OUTPUT
+          echo "Next version: $NEXT"
+
+      - name: Update Cargo.toml
+        run: |
+          NEXT="${{ steps.next.outputs.version }}"
+          sed -i "0,/^version = \".*\"/{s/^version = \".*\"/version = \"$NEXT\"/}" Cargo.toml
+          # Also update the version string in nodeinfo if it's hardcoded
+          find src/ -name "*.rs" -exec \
+            sed -i "s/\"version\": \"${{ steps.current.outputs.version }}\"/\"version\": \"$NEXT\"/g" {} \;
+
+      - name: Update Cargo.lock
+        run: cargo update --workspace --locked 2>/dev/null || cargo generate-lockfile
+
+      - name: Commit and tag
+        run: |
+          NEXT="${{ steps.next.outputs.version }}"
+          git add Cargo.toml Cargo.lock src/
+          git commit -m "chore: bump version to $NEXT [skip ci]"
+          git tag -a "v$NEXT" -m "Release v$NEXT"
+          git push origin main --follow-tags
+
+      - name: Create GitHub Release (draft)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.next.outputs.version }}
+          name: v${{ steps.next.outputs.version }}
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Taverna v${{ steps.next.outputs.version }}
+
+            _Release notes auto-generated from merged PRs._
+
+            ### Deployment
+
+            ```bash
+            # Pull and build
+            git pull && cargo build --release
+
+            # Run migrations before restarting
+            ./target/release/taverna-cli db migrate
+
+            # Restart the service
+            systemctl restart taverna
+            ```

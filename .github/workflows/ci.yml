@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel in-progress runs on the same branch to save minutes
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Cache key busted when rust-toolchain changes
+  RUST_CACHE_KEY: v1
+
+jobs:
+  # ── Quick checks first (fail fast, cheap) ────────────────────────────────
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ${{ env.RUST_CACHE_KEY }}
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # ── Tests (needs PostgreSQL) ──────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: taverna
+          POSTGRES_PASSWORD: taverna
+          POSTGRES_DB: taverna_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgres://taverna:taverna@localhost:5432/taverna_test
+      BASE_URL: http://localhost:3000
+      TAVERNA_DOMAIN: localhost
+      JWT_SECRET: test-secret-not-for-production
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ${{ env.RUST_CACHE_KEY }}
+
+      - name: Install pgmq
+        run: |
+          sudo apt-get install -y postgresql-server-dev-16 libclang-dev
+          cargo install --locked cargo-pgrx --version 0.18.0
+          cargo pgrx init --pg16 $(which pg_config)
+          git clone --depth 1 https://github.com/tembo-io/pgmq.git /tmp/pgmq
+          cd /tmp/pgmq && git checkout 885251cf4dcb4853d7fa253f56e382d84d5f0821 && cargo pgrx install --pg-config $(which pg_config)
+
+          # Copy extension files into the PostgreSQL service container
+          PG_CONTAINER="${{ job.services.postgres.id }}"
+          PG_PKGLIBDIR=$(docker exec "$PG_CONTAINER" pg_config --pkglibdir)
+          PG_SHAREDIR=$(docker exec "$PG_CONTAINER" pg_config --sharedir)
+          docker cp "$(pg_config --pkglibdir)/pgmq.so" "$PG_CONTAINER:$PG_PKGLIBDIR/"
+          docker cp "$(pg_config --sharedir)/extension/pgmq.control" "$PG_CONTAINER:$PG_SHAREDIR/extension/"
+          for f in "$(pg_config --sharedir)/extension"/pgmq--*.sql; do
+            docker cp "$f" "$PG_CONTAINER:$PG_SHAREDIR/extension/"
+          done
+          docker exec "$PG_CONTAINER" psql -U taverna -d taverna_test \
+            -c "CREATE EXTENSION IF NOT EXISTS pgmq;"
+
+      - name: Install sea-orm-cli
+        run: cargo install sea-orm-cli --version 1.1.1 --locked
+
+      - name: Run migrations
+        run: cargo loco db migrate
+
+      - name: Run tests
+        run: cargo test --all-features
+
+  
