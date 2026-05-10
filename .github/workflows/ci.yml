@@ -79,7 +79,7 @@ jobs:
       - name: Install pgmq
         run: |
           sudo apt-get install -y postgresql-server-dev-16 libclang-dev
-          cargo install --locked cargo-pgrx --version 0.12.0
+          cargo install --locked cargo-pgrx --version 0.18.0
           cargo pgrx init --pg16 $(which pg_config) 2>/dev/null || true
           git clone --depth 1 https://github.com/tembo-io/pgmq.git /tmp/pgmq
           cd /tmp/pgmq && cargo pgrx install --pg-config $(which pg_config)

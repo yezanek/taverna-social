@@ -86,7 +86,7 @@ jobs:
       - name: Commit and tag
         run: |
           NEXT="${{ steps.next.outputs.version }}"
-          git add Cargo.toml Cargo.lock
+          git add Cargo.toml Cargo.lock src/
           git commit -m "chore: bump version to $NEXT [skip ci]"
           git tag -a "v$NEXT" -m "Release v$NEXT"
           git push origin main --follow-tags

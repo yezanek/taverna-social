@@ -61,7 +61,7 @@ jobs:
 
       - name: Check for todo!/unimplemented! macros
         run: |
-          FOUND=$(grep -rn "todo!\|unimplemented!\|panic!(" src/ \
+          FOUND=$(grep -rEn "todo!|unimplemented!|panic!(\(|\b)" src/ \
             --include="*.rs" \
             | grep -v "#\[cfg(test)\]" \
             | grep -v "mod tests" \
