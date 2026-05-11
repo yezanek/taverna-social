@@ -65,8 +65,9 @@ pub async fn register(
     }
 
     if form.password != form.password_confirm {
-        return helpers::render(
+        return render_with_csrf(
             &v,
+            jar,
             "auth/register.html",
             json!({
                 "theme": theme,
@@ -78,8 +79,9 @@ pub async fn register(
     }
 
     if form.password.len() < 8 {
-        return helpers::render(
+        return render_with_csrf(
             &v,
+            jar,
             "auth/register.html",
             json!({
                 "theme": theme,
@@ -110,8 +112,9 @@ pub async fn register(
                 UserError::Validation(msg) => msg,
                 _ => "Registration failed. Please try again.".to_string(),
             };
-            helpers::render(
+            render_with_csrf(
                 &v,
+                jar,
                 "auth/register.html",
                 json!({
                     "theme": theme,
@@ -163,8 +166,9 @@ pub async fn login(
     let user = match user {
         Some(u) if UserModel::verify_password(&u, &form.password).await => u,
         _ => {
-            return helpers::render(
+            return render_with_csrf(
                 &v,
+                jar,
                 "auth/login.html",
                 json!({
                     "theme": theme,
@@ -239,19 +243,44 @@ fn validate_csrf(
     headers: &axum::http::HeaderMap,
     taverna: &TavernaConfig,
 ) -> bool {
-    let origin_or_referer = headers
-        .get("origin")
-        .or_else(|| headers.get("referer"))
-        .and_then(|v| v.to_str().ok());
-    if let Some(value) = origin_or_referer {
-        if !value.starts_with(&taverna.base_url) {
-            return false;
+    if let Ok(base) = url::Url::parse(&taverna.base_url) {
+        let origin = headers
+            .get("origin")
+            .or_else(|| headers.get("referer"))
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| url::Url::parse(v).ok());
+        if let Some(ref origin_url) = origin {
+            if origin_url.scheme() != base.scheme()
+                || origin_url.host() != base.host()
+                || origin_url.port() != base.port()
+            {
+                return false;
+            }
         }
     }
     let cookie_token = jar.get("csrf_token").map(|c| c.value().to_string());
     match (cookie_token, form_token) {
         (Some(ref cookie), Some(form)) => cookie == form,
-        (None, None) => true,
         _ => false,
     }
+}
+
+#[allow(clippy::result_large_err)]
+fn render_with_csrf(
+    v: &TeraView,
+    jar: CookieJar,
+    template: &str,
+    mut ctx: serde_json::Value,
+) -> Result<Response> {
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .build();
+    if let Some(obj) = ctx.as_object_mut() {
+        obj.insert("csrf_token".to_string(), serde_json::json!(csrf_token));
+    }
+    let response = helpers::render(v, template, ctx)?;
+    Ok((jar.add(csrf_cookie), response).into_response())
 }

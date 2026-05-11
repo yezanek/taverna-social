@@ -35,6 +35,7 @@ impl UserModel {
         base_url: &str,
     ) -> Result<users::Model, UserError> {
         let username = username.trim().to_lowercase();
+        let email = email.trim().to_lowercase();
 
         if username.len() < 3 || username.len() > 30 {
             return Err(UserError::InvalidUsername(
@@ -46,24 +47,6 @@ impl UserModel {
             return Err(UserError::InvalidUsername(
                 "Username can only contain letters, numbers, and underscores".to_string(),
             ));
-        }
-
-        let existing = users::Entity::find()
-            .filter(users::Column::Username.eq(&username))
-            .one(db)
-            .await?;
-
-        if existing.is_some() {
-            return Err(UserError::UsernameTaken);
-        }
-
-        let existing_email = users::Entity::find()
-            .filter(users::Column::Email.eq(email))
-            .one(db)
-            .await?;
-
-        if existing_email.is_some() {
-            return Err(UserError::EmailTaken);
         }
 
         let salt = SaltString::generate(&mut OsRng);
@@ -84,7 +67,7 @@ impl UserModel {
         let user = ActiveModel {
             id: Set(uuid::Uuid::new_v4()),
             username: Set(username.clone()),
-            email: Set(Some(email.to_string())),
+            email: Set(Some(email.clone())),
             password_hash: Set(Some(password_hash)),
             display_name: Set(Some(username.clone())),
             bio: Set(None),
@@ -103,7 +86,18 @@ impl UserModel {
             updated_at: Set(chrono::Utc::now().into()),
         };
 
-        let user = user.insert(db).await?;
+        let user = user.insert(db).await.map_err(|e| {
+            let error_str = e.to_string();
+            if error_str.contains("duplicate key value") {
+                if error_str.contains("username") {
+                    return UserError::UsernameTaken;
+                }
+                if error_str.contains("email") {
+                    return UserError::EmailTaken;
+                }
+            }
+            UserError::Db(e)
+        })?;
         Ok(user)
     }
 
@@ -112,8 +106,9 @@ impl UserModel {
         db: &DatabaseConnection,
         email: &str,
     ) -> Result<Option<users::Model>, sea_orm::DbErr> {
+        let email = email.trim().to_lowercase();
         users::Entity::find()
-            .filter(users::Column::Email.eq(email))
+            .filter(users::Column::Email.eq(&email))
             .one(db)
             .await
     }

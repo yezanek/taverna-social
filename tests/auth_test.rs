@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use axum_extra::extract::cookie::Cookie;
     use loco_rs::testing::prelude::*;
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
     use serial_test::serial;
@@ -9,6 +10,11 @@ mod tests {
 
     fn setup() {
         dotenvy::dotenv().ok();
+    }
+
+    async fn get_csrf(server: &axum_test::TestServer, path: &str) -> String {
+        let resp = server.get(path).await;
+        resp.cookie("csrf_token").value().to_string()
     }
 
     #[tokio::test]
@@ -27,13 +33,16 @@ mod tests {
     async fn test_register_user_success() {
         setup();
         request::<App, _, _>(|request, ctx| async move {
+            let csrf = get_csrf(&request, "/register").await;
             let response = request
                 .post("/register")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "username": "testuser",
                     "email": "test@example.com",
                     "password": "password123",
                     "password_confirm": "password123",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert!(response.status_code() == 302 || response.status_code() == 303);
@@ -74,13 +83,16 @@ mod tests {
             .await
             .unwrap();
 
+            let csrf = get_csrf(&request, "/register").await;
             let response = request
                 .post("/register")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "username": "testuser",
                     "email": "other@example.com",
                     "password": "password123",
                     "password_confirm": "password123",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert_eq!(response.status_code(), 200);
@@ -106,13 +118,16 @@ mod tests {
             .await
             .unwrap();
 
+            let csrf = get_csrf(&request, "/register").await;
             let response = request
                 .post("/register")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "username": "seconduser",
                     "email": "dup@example.com",
                     "password": "password123",
                     "password_confirm": "password123",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert_eq!(response.status_code(), 200);
@@ -127,13 +142,16 @@ mod tests {
     async fn test_register_password_mismatch() {
         setup();
         request::<App, _, _>(|request, _ctx| async move {
+            let csrf = get_csrf(&request, "/register").await;
             let response = request
                 .post("/register")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "username": "testuser",
                     "email": "test@example.com",
                     "password": "password123",
                     "password_confirm": "different",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert_eq!(response.status_code(), 200);
@@ -148,13 +166,16 @@ mod tests {
     async fn test_register_password_too_short() {
         setup();
         request::<App, _, _>(|request, _ctx| async move {
+            let csrf = get_csrf(&request, "/register").await;
             let response = request
                 .post("/register")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "username": "testuser",
                     "email": "test@example.com",
                     "password": "short",
                     "password_confirm": "short",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert_eq!(response.status_code(), 200);
@@ -191,11 +212,14 @@ mod tests {
             .await
             .unwrap();
 
+            let csrf = get_csrf(&request, "/login").await;
             let response = request
                 .post("/login")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "email": "test@example.com",
                     "password": "password123",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert!(response.status_code() == 302 || response.status_code() == 303);
@@ -226,11 +250,14 @@ mod tests {
             .await
             .unwrap();
 
+            let csrf = get_csrf(&request, "/login").await;
             let response = request
                 .post("/login")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "email": "test@example.com",
                     "password": "wrongpassword",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert_eq!(response.status_code(), 200);
@@ -245,11 +272,14 @@ mod tests {
     async fn test_login_nonexistent_user() {
         setup();
         request::<App, _, _>(|request, _ctx| async move {
+            let csrf = get_csrf(&request, "/login").await;
             let response = request
                 .post("/login")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "email": "nobody@example.com",
                     "password": "password123",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert_eq!(response.status_code(), 200);
@@ -275,11 +305,14 @@ mod tests {
             .await
             .unwrap();
 
+            let csrf = get_csrf(&request, "/login").await;
             let login_response = request
                 .post("/login")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
                     "email": "test@example.com",
                     "password": "password123",
+                    "csrf_token": csrf,
                 }))
                 .await;
             assert!(login_response.status_code() == 302 || login_response.status_code() == 303);

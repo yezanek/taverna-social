@@ -19,9 +19,19 @@ impl TavernaConfig {
         let base_url =
             std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
         let domain = std::env::var("DOMAIN").unwrap_or_else(|_| "localhost:3000".to_string());
-        let federation_enabled = std::env::var("FEDERATION_ENABLED")
-            .map(|v| v == "true")
-            .unwrap_or(false);
+        let federation_enabled = match std::env::var("FEDERATION_ENABLED") {
+            Ok(v) => match v.to_lowercase().as_str() {
+                "true" => true,
+                "false" => false,
+                other => {
+                    return Err(format!(
+                        "Invalid FEDERATION_ENABLED value '{}': expected 'true' or 'false'",
+                        other
+                    ))
+                }
+            },
+            Err(_) => false,
+        };
 
         let blocked_domains: Vec<String> = match std::env::var("BLOCKED_DOMAINS") {
             Ok(val) => val

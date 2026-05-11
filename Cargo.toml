@@ -51,3 +51,4 @@ path = "src/bin/main.rs"
 [dev-dependencies]
 loco-rs = { workspace = true, features = ["testing"] }
 serial_test = "3"
+axum-test = "17.3"
