@@ -156,18 +156,19 @@ impl UserModel {
         Ok((keypair.public_key, keypair.private_key))
     }
 
-    pub fn verify_password(model: &users::Model, password: &str) -> bool {
-        match &model.password_hash {
-            Some(hash) => {
-                let parsed = PasswordHash::new(hash);
-                match parsed {
-                    Ok(parsed) => Argon2::default()
-                        .verify_password(password.as_bytes(), &parsed)
-                        .is_ok(),
-                    Err(_) => false,
-                }
-            }
-            None => false,
-        }
+    pub async fn verify_password(model: &users::Model, password: &str) -> bool {
+        let password_hash = match &model.password_hash {
+            Some(h) => h.clone(),
+            None => return false,
+        };
+        let password = password.to_string();
+        tokio::task::spawn_blocking(move || match PasswordHash::new(&password_hash) {
+            Ok(parsed) => Argon2::default()
+                .verify_password(password.as_bytes(), &parsed)
+                .is_ok(),
+            Err(_) => false,
+        })
+        .await
+        .unwrap_or(false)
     }
 }

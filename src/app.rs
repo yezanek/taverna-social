@@ -64,25 +64,30 @@ impl Hooks for App {
     }
 
     async fn after_routes(router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
-        let taverna_config = TavernaConfig::from_env();
+        let taverna_config = TavernaConfig::from_env()
+            .map_err(|e| loco_rs::Error::string(&format!("Config error: {}", e)))?;
 
-        let domain = taverna_config.domain.clone();
-        let federation_config = activitypub_federation::config::FederationConfig::builder()
-            .domain(&domain)
-            .app_data(ctx.db.clone())
-            .debug(cfg!(debug_assertions))
-            .build()
-            .await
-            .map_err(|e| loco_rs::Error::string(&format!("Federation config error: {}", e)))?;
+        if taverna_config.federation.enabled {
+            let domain = taverna_config.domain.clone();
+            let federation_config = activitypub_federation::config::FederationConfig::builder()
+                .domain(&domain)
+                .app_data(ctx.db.clone())
+                .debug(cfg!(debug_assertions))
+                .build()
+                .await
+                .map_err(|e| loco_rs::Error::string(&format!("Federation config error: {}", e)))?;
 
-        info!("Federation configured for domain: {}", domain);
+            info!("Federation configured for domain: {}", domain);
 
-        let router = router.layer(activitypub_federation::config::FederationMiddleware::new(
-            federation_config,
-        ));
+            let router = router.layer(activitypub_federation::config::FederationMiddleware::new(
+                federation_config,
+            ));
+
+            let router = router.layer(Extension(taverna_config));
+            return Ok(router);
+        }
 
         let router = router.layer(Extension(taverna_config));
-
         Ok(router)
     }
 

@@ -1,3 +1,4 @@
+use axum::http::StatusCode;
 use axum::{Extension, Form};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use loco_rs::prelude::*;
@@ -16,12 +17,16 @@ pub struct RegisterForm {
     pub email: String,
     pub password: String,
     pub password_confirm: String,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LoginForm {
     pub email: String,
     pub password: String,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
 }
 
 #[instrument(skip(v, jar))]
@@ -30,7 +35,18 @@ pub async fn register_form(
     jar: CookieJar,
 ) -> Result<Response> {
     let theme = helpers::get_theme(&jar);
-    helpers::render(&v, "auth/register.html", json!({"theme": theme}))
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .build();
+    let response = helpers::render(
+        &v,
+        "auth/register.html",
+        json!({"theme": theme, "csrf_token": csrf_token}),
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 #[instrument(skip(v, jar, ctx, form))]
@@ -39,9 +55,14 @@ pub async fn register(
     jar: CookieJar,
     State(ctx): State<AppContext>,
     Extension(taverna): Extension<TavernaConfig>,
+    headers: axum::http::HeaderMap,
     Form(form): Form<RegisterForm>,
 ) -> Result<Response> {
     let theme = helpers::get_theme(&jar);
+
+    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
 
     if form.password != form.password_confirm {
         return helpers::render(
@@ -106,7 +127,18 @@ pub async fn register(
 #[instrument(skip(v, jar))]
 pub async fn login_form(ViewEngine(v): ViewEngine<TeraView>, jar: CookieJar) -> Result<Response> {
     let theme = helpers::get_theme(&jar);
-    helpers::render(&v, "auth/login.html", json!({"theme": theme}))
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .build();
+    let response = helpers::render(
+        &v,
+        "auth/login.html",
+        json!({"theme": theme, "csrf_token": csrf_token}),
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 #[instrument(skip(v, jar, ctx, form))]
@@ -114,16 +146,22 @@ pub async fn login(
     ViewEngine(v): ViewEngine<TeraView>,
     jar: CookieJar,
     State(ctx): State<AppContext>,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: axum::http::HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Result<Response> {
     let theme = helpers::get_theme(&jar);
+
+    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
 
     let user = UserModel::find_by_email(&ctx.db, &form.email)
         .await
         .map_err(|_| Error::InternalServerError)?;
 
     let user = match user {
-        Some(u) if UserModel::verify_password(&u, &form.password) => u,
+        Some(u) if UserModel::verify_password(&u, &form.password).await => u,
         _ => {
             return helpers::render(
                 &v,
@@ -146,10 +184,13 @@ pub async fn login(
     let refresh_token =
         create_refresh_token(&user, &jwt_secret.secret).map_err(|_| Error::InternalServerError)?;
 
+    let secure_cookies = taverna.base_url.starts_with("https");
+
     let access_cookie = Cookie::build(("access_token", access_token))
         .http_only(true)
         .same_site(SameSite::Lax)
         .path("/")
+        .secure(secure_cookies)
         .max_age(time::Duration::hours(1))
         .build();
 
@@ -157,6 +198,7 @@ pub async fn login(
         .http_only(true)
         .same_site(SameSite::Lax)
         .path("/")
+        .secure(secure_cookies)
         .max_age(time::Duration::days(7))
         .build();
 
@@ -165,11 +207,17 @@ pub async fn login(
 }
 
 #[instrument(skip(jar))]
-pub async fn logout(jar: CookieJar) -> Result<Response> {
+pub async fn logout(
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+) -> Result<Response> {
+    let secure_cookies = taverna.base_url.starts_with("https");
+
     let access_cookie = Cookie::build(("access_token", ""))
         .http_only(true)
         .same_site(SameSite::Lax)
         .path("/")
+        .secure(secure_cookies)
         .max_age(time::Duration::new(0, 0))
         .build();
 
@@ -177,9 +225,33 @@ pub async fn logout(jar: CookieJar) -> Result<Response> {
         .http_only(true)
         .same_site(SameSite::Lax)
         .path("/")
+        .secure(secure_cookies)
         .max_age(time::Duration::new(0, 0))
         .build();
 
     let response = format::redirect("/login").into_response();
     Ok((jar.add(access_cookie).add(refresh_cookie), response).into_response())
+}
+
+fn validate_csrf(
+    jar: &CookieJar,
+    form_token: Option<&str>,
+    headers: &axum::http::HeaderMap,
+    taverna: &TavernaConfig,
+) -> bool {
+    let origin_or_referer = headers
+        .get("origin")
+        .or_else(|| headers.get("referer"))
+        .and_then(|v| v.to_str().ok());
+    if let Some(value) = origin_or_referer {
+        if !value.starts_with(&taverna.base_url) {
+            return false;
+        }
+    }
+    let cookie_token = jar.get("csrf_token").map(|c| c.value().to_string());
+    match (cookie_token, form_token) {
+        (Some(ref cookie), Some(form)) => cookie == form,
+        (None, None) => true,
+        _ => false,
+    }
 }

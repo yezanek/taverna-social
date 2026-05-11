@@ -6,6 +6,7 @@
 <div style="color:var(--accent);margin-bottom:1rem">{{ error }}</div>
 {% endif %}
 <form method="POST" action="/login" style="display:flex;flex-direction:column;gap:0.5rem;max-width:400px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token | default(value='') }}">
   <div>
     <label for="email">Email</label>
     <input type="email" id="email" name="email" required style="display:block;width:100%;padding:0.5rem">

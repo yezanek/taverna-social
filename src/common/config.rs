@@ -15,7 +15,7 @@ pub struct FederationSettings {
 }
 
 impl TavernaConfig {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self, String> {
         let base_url =
             std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
         let domain = std::env::var("DOMAIN").unwrap_or_else(|_| "localhost:3000".to_string());
@@ -23,14 +23,30 @@ impl TavernaConfig {
             .map(|v| v == "true")
             .unwrap_or(false);
 
-        Self {
+        let blocked_domains: Vec<String> = match std::env::var("BLOCKED_DOMAINS") {
+            Ok(val) => val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            Err(_) => vec![],
+        };
+
+        let http_signature_expiry_seconds = match std::env::var("HTTP_SIGNATURE_EXPIRY_SECONDS") {
+            Ok(val) => val
+                .parse::<u32>()
+                .map_err(|e| format!("Invalid HTTP_SIGNATURE_EXPIRY_SECONDS '{}': {}", val, e))?,
+            Err(_) => 30,
+        };
+
+        Ok(Self {
             base_url,
             domain,
             federation: FederationSettings {
                 enabled: federation_enabled,
-                blocked_domains: vec![],
-                http_signature_expiry_seconds: 30,
+                blocked_domains,
+                http_signature_expiry_seconds,
             },
-        }
+        })
     }
 }

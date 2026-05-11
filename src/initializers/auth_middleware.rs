@@ -9,6 +9,8 @@ use crate::common::jwt::verify_token;
 use crate::models::_entities::users;
 use crate::models::users::UserModel;
 
+const ACCESS_TOKEN_COOKIE: &str = "access_token";
+
 #[derive(Debug, Clone)]
 pub struct AuthUser(pub users::Model);
 
@@ -31,7 +33,7 @@ where
             .get_jwt_config()
             .map_err(|_| Error::Unauthorized("JWT not configured".to_string()))?;
 
-        let token = extract_token_from_cookie(parts, "access_token")?;
+        let token = extract_token_from_cookie(parts, ACCESS_TOKEN_COOKIE)?;
         let claims = verify_token(&token, &jwt_secret.secret)
             .map_err(|_| Error::Unauthorized("Invalid token".to_string()))?;
 
@@ -65,7 +67,7 @@ where
             Err(_) => return Ok(Self(None)),
         };
 
-        let token = match extract_token_from_cookie(parts, "access_token") {
+        let token = match extract_token_from_cookie(parts, ACCESS_TOKEN_COOKIE) {
             Ok(t) => t,
             Err(_) => return Ok(Self(None)),
         };

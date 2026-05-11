@@ -341,11 +341,8 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(UserModel::verify_password(
-            &user,
-            "correct-horse-battery-staple"
-        ));
-        assert!(!UserModel::verify_password(&user, "wrong-password"));
+        assert!(UserModel::verify_password(&user, "correct-horse-battery-staple").await);
+        assert!(!UserModel::verify_password(&user, "wrong-password").await);
     }
 
     #[tokio::test]

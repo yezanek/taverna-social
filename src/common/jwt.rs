@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::users;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
     pub exp: usize,
@@ -16,7 +16,9 @@ pub fn create_access_token(
 ) -> Result<String, jsonwebtoken::errors::Error> {
     let expiration = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::hours(1))
-        .expect("valid timestamp")
+        .ok_or_else(|| {
+            jsonwebtoken::errors::Error::from(jsonwebtoken::errors::ErrorKind::ExpiredSignature)
+        })?
         .timestamp() as usize;
 
     let claims = Claims {
@@ -38,7 +40,9 @@ pub fn create_refresh_token(
 ) -> Result<String, jsonwebtoken::errors::Error> {
     let expiration = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::days(7))
-        .expect("valid timestamp")
+        .ok_or_else(|| {
+            jsonwebtoken::errors::Error::from(jsonwebtoken::errors::ErrorKind::ExpiredSignature)
+        })?
         .timestamp() as usize;
 
     let claims = Claims {
