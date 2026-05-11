@@ -29,9 +29,9 @@ A self-hostable, federated community platform — Facebook Groups meets old Redd
 
 ## Repository Layout
 
-```
+```text
 taverna-social/                 ← git repo root
-├── README.md                   ← you are here
+├── INSTRUCTIONS.md                   ← you are here
 ├── AGENTS.md                   ← coding rules; read automatically by AI tools
 ├── SPEC.md                     ← full technical specification (authoritative)
 ├── DECISIONS.md                ← architecture decision log
@@ -86,7 +86,7 @@ This project is designed to be implemented by **opencode** (writer) and reviewed
 
 ### Workflow per phase
 
-```
+```text
 1. Open OPENCODE_PROMPTS.md → copy the phase prompt → paste into opencode
 2. opencode shows a plan → you approve → it implements
 3. Run the gate: cargo check && cargo test && cargo clippy -- -D warnings
@@ -99,7 +99,7 @@ This project is designed to be implemented by **opencode** (writer) and reviewed
 
 Inside opencode, these commands are available once you open the project directory:
 
-```
+```text
 /project:implement-phase 1      implement a full phase (shows plan first)
 /project:implement-theme        implement the theme switcher specifically
 /project:implement-federation   implement the AP federation layer specifically
