@@ -15,6 +15,7 @@ use tracing::info;
 use crate::common::config::TavernaConfig;
 use crate::controllers::{auth, theme};
 use crate::initializers;
+use axum::Extension;
 
 pub struct App;
 #[async_trait]
@@ -79,6 +80,8 @@ impl Hooks for App {
         let router = router.layer(activitypub_federation::config::FederationMiddleware::new(
             federation_config,
         ));
+
+        let router = router.layer(Extension(taverna_config));
 
         Ok(router)
     }

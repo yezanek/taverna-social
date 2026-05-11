@@ -35,7 +35,12 @@ where
         let claims = verify_token(&token, &jwt_secret.secret)
             .map_err(|_| Error::Unauthorized("Invalid token".to_string()))?;
 
-        let user = UserModel::find_by_ap_id(&ctx.db, &claims.sub)
+        let user_id: uuid::Uuid = claims
+            .sub
+            .parse()
+            .map_err(|_| Error::Unauthorized("Invalid user ID in token".to_string()))?;
+
+        let user = UserModel::find_by_id(&ctx.db, user_id)
             .await
             .map_err(|_| Error::Unauthorized("User not found".to_string()))?
             .ok_or_else(|| Error::Unauthorized("User not found".to_string()))?;
@@ -70,7 +75,12 @@ where
             Err(_) => return Ok(Self(None)),
         };
 
-        let user = match UserModel::find_by_ap_id(&ctx.db, &claims.sub).await {
+        let user_id: uuid::Uuid = match claims.sub.parse() {
+            Ok(id) => id,
+            Err(_) => return Ok(Self(None)),
+        };
+
+        let user = match UserModel::find_by_id(&ctx.db, user_id).await {
             Ok(Some(u)) => u,
             _ => return Ok(Self(None)),
         };

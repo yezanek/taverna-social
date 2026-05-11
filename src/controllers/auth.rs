@@ -1,10 +1,11 @@
-use axum::Form;
+use axum::{Extension, Form};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use loco_rs::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::instrument;
 
+use crate::common::config::TavernaConfig;
 use crate::common::jwt::{create_access_token, create_refresh_token};
 use crate::models::users::{UserError, UserModel};
 use crate::views::helpers;
@@ -37,6 +38,7 @@ pub async fn register(
     ViewEngine(v): ViewEngine<TeraView>,
     jar: CookieJar,
     State(ctx): State<AppContext>,
+    Extension(taverna): Extension<TavernaConfig>,
     Form(form): Form<RegisterForm>,
 ) -> Result<Response> {
     let theme = helpers::get_theme(&jar);
@@ -67,7 +69,7 @@ pub async fn register(
         );
     }
 
-    let base_url = "http://localhost:3000".to_string();
+    let base_url = taverna.base_url.clone();
 
     match UserModel::create_local(
         &ctx.db,

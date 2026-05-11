@@ -73,8 +73,9 @@ impl UserModel {
             .map_err(|e| UserError::Other(anyhow::anyhow!("Password hashing failed: {}", e)))?
             .to_string();
 
-        let keypair = generate_actor_keypair()
+        let keypair = Self::generate_keypair()
             .map_err(|e| UserError::Other(anyhow::anyhow!("Keypair generation failed: {}", e)))?;
+        let (public_key, private_key) = keypair;
 
         let ap_id = format!("{}/u/{}", base_url.trim_end_matches('/'), &username);
         let inbox_url = format!("{}/inbox", &ap_id);
@@ -89,8 +90,8 @@ impl UserModel {
             bio: Set(None),
             avatar_url: Set(None),
             ap_id: Set(ap_id),
-            public_key: Set(keypair.public_key),
-            private_key: Set(Some(keypair.private_key)),
+            public_key: Set(public_key),
+            private_key: Set(Some(private_key)),
             is_local: Set(true),
             is_admin: Set(false),
             is_banned: Set(false),
@@ -129,6 +130,17 @@ impl UserModel {
     }
 
     #[instrument(skip(db))]
+    pub async fn find_by_id(
+        db: &DatabaseConnection,
+        id: uuid::Uuid,
+    ) -> Result<Option<users::Model>, sea_orm::DbErr> {
+        users::Entity::find()
+            .filter(users::Column::Id.eq(id))
+            .one(db)
+            .await
+    }
+
+    #[instrument(skip(db))]
     pub async fn find_by_ap_id(
         db: &DatabaseConnection,
         ap_id: &str,
@@ -137,6 +149,11 @@ impl UserModel {
             .filter(users::Column::ApId.eq(ap_id))
             .one(db)
             .await
+    }
+
+    pub fn generate_keypair() -> Result<(String, String), anyhow::Error> {
+        let keypair = generate_actor_keypair()?;
+        Ok((keypair.public_key, keypair.private_key))
     }
 
     pub fn verify_password(model: &users::Model, password: &str) -> bool {
