@@ -153,7 +153,7 @@ Each phase has its own file: `PHASE_1.md`, `PHASE_2.md`, etc.
 ```bash
 # Initial setup
 cargo install loco-cli sea-orm-cli
-loco new taverna   # only for phase 1
+# Scaffold into repo root — see PHASE_1.md Task 1.1
 
 # Database
 createdb taverna_development

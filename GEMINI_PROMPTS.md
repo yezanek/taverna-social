@@ -59,10 +59,9 @@ cargo test failed with:
 Fix these failures without deleting any tests.
 ```
 
-### Step 2 — Start gemini-cli in the taverna/ directory
+### Step 2 — Start gemini-cli in the repo root (`taverna-social/`)
 
 ```bash
-cd taverna
 gemini --model gemini-2.5-pro
 ```
 

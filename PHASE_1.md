@@ -12,11 +12,24 @@
 
 ### Task 1.1 — Create the Loco project
 
+The repo root (`taverna-social/`) is already initialised with the planning files.
+Scaffold the Loco project directly into it:
+
 ```bash
 cargo install loco-cli
-loco new taverna
+# Run from the repo root:
+loco new .
 # When prompted: choose "Saas app" template, choose "postgres" database
-cd taverna
+```
+
+If `loco new .` is not supported by your version of loco-cli, scaffold into a
+temporary directory and move the files up:
+
+```bash
+cd /tmp && loco new taverna
+# When prompted: choose "Saas app" template, choose "postgres" database
+mv taverna/src taverna/config taverna/migration taverna/assets    taverna/Cargo.toml taverna/Cargo.lock /path/to/taverna-social/
+rm -rf /tmp/taverna
 ```
 
 This generates the initial project structure. You will heavily modify it.

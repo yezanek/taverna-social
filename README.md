@@ -30,7 +30,7 @@ A self-hostable, federated community platform — Facebook Groups meets old Redd
 ## Repository Layout
 
 ```
-taverna/
+taverna-social/                 ← git repo root
 ├── README.md                   ← you are here
 ├── AGENTS.md                   ← coding rules; read automatically by AI tools
 ├── SPEC.md                     ← full technical specification (authoritative)
@@ -43,18 +43,25 @@ taverna/
 ├── OPENCODE_PROMPTS.md         ← prompts to paste into opencode (implementor)
 ├── GEMINI_PROMPTS.md           ← prompts to paste into gemini-cli (QA)
 ├── taverna_design.docx         ← full architecture design document
-└── .opencode/
-    └── commands/               ← opencode slash commands (auto-loaded by opencode)
-        ├── implement-phase.md
-        ├── implement-theme.md
-        ├── implement-federation.md
-        ├── fix-issue.md
-        └── fix-clippy.md
-```
-
-Once the project is scaffolded by the AI tools, the Rust project structure appears alongside these files:
-```
+├── .opencode/
+│   └── commands/               ← opencode slash commands (auto-loaded by opencode)
+│       ├── implement-phase.md
+│       ├── implement-theme.md
+│       ├── implement-federation.md
+│       ├── fix-issue.md
+│       └── fix-clippy.md
+├── .github/
+│   ├── pull_request_template.md
+│   ├── deny.toml
+│   └── workflows/
+│       ├── ci.yml
+│       ├── pr-checks.yml
+│       ├── version-bump.yml
+│       └── dependencies.yml
+│
+│   ← Rust project files, scaffolded by opencode in Phase 1:
 ├── Cargo.toml
+├── Cargo.lock
 ├── config/
 ├── migration/
 ├── src/
@@ -231,7 +238,6 @@ PostgreSQL itself is best left to the system (`apt`) rather than home-manager, s
 ## Running Locally (after implementation)
 
 ```bash
-nix develop   # enter dev shell
 cargo loco db migrate
 cargo loco start
 # → http://localhost:3000
