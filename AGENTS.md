@@ -26,7 +26,7 @@ You are implementing Taverna: a federated community platform (like Reddit + Face
 ## Project Layout (Loco conventions)
 
 ```
-taverna/
+taverna-social/
 ├── Cargo.toml
 ├── config/
 │   ├── development.yaml
@@ -153,7 +153,7 @@ Each phase has its own file: `PHASE_1.md`, `PHASE_2.md`, etc.
 ```bash
 # Initial setup
 cargo install loco-cli sea-orm-cli
-loco new taverna   # only for phase 1
+# Scaffold into repo root — see PHASE_1.md Task 1.1
 
 # Database
 createdb taverna_development
@@ -195,9 +195,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-rsa = "0.9"
-sha2 = "0.10"
-base64 = "0.22"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tera = "1"
 pulldown-cmark = "0.11"

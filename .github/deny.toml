@@ -53,7 +53,13 @@ skip-tree = []
 [advisories]
 # Fail on any known security vulnerability
 version = 2
-ignore = []
+ignore = [
+    # RUSTSEC-2025-0057: fxhash is unmaintained but still used by
+    # selectors → scraper → loco-rs (transitive). No known CVE.
+    # The maintained fork rustc-hash has a different lib name so a
+    # straight [patch] won't work without upstream changes.
+    "RUSTSEC-2025-0057",
+]
 
 [sources]
 # Only allow crates.io as a source (no git deps in production)

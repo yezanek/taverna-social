@@ -1,7 +1,7 @@
 # How to Use opencode to Implement Taverna
 
 This file tells you exactly what to say to opencode to implement each phase.
-For the QA workflow using gemini-cli, see GEMINI.md.
+For the QA workflow using gemini-cli, see GEMINI_PROMPTS.md.
 
 ---
 
@@ -89,7 +89,7 @@ For anything that creates or significantly modifies files, use Plan mode.
 
 ## Phase 1 — Scaffold & Database
 
-Run from the **parent directory** (before taverna/ exists):
+Run from the **repo root** (`taverna-social/`):
 
 ```
 Read AGENTS.md, SPEC.md, and PHASE_1.md from the current directory.
@@ -104,11 +104,14 @@ the activitypub_federation crate requires this field for the Object trait's
 last_refreshed_at() method.
 
 Verify the PHASE_1.md deliverables checklist when done.
+
+Note: `loco new` will try to create a subdirectory. After scaffolding, move all
+generated files up to the repo root (Cargo.toml, src/, config/, migration/, assets/)
+and delete the empty subdirectory before committing.
 ```
 
 Gate before Phase 2:
 ```bash
-cd taverna
 cargo check
 cargo loco db migrate
 cargo test
