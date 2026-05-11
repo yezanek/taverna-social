@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use axum::Router as AxumRouter;
 use loco_rs::{
     app::{AppContext, Hooks, Initializer},
     boot::{create_app, BootResult, StartMode},
@@ -9,7 +10,10 @@ use loco_rs::{
     Result,
 };
 use migration::Migrator;
+use tracing::info;
 
+use crate::common::config::TavernaConfig;
+use crate::controllers::{auth, theme};
 use crate::initializers;
 
 pub struct App;
@@ -44,7 +48,39 @@ impl Hooks for App {
     }
 
     fn routes(_ctx: &AppContext) -> AppRoutes {
+        use axum::routing::{get, post};
+
+        let auth_routes = loco_rs::controller::Routes::new()
+            .add("/register", get(auth::register_form).post(auth::register))
+            .add("/login", get(auth::login_form).post(auth::login))
+            .add("/logout", post(auth::logout));
+
+        let theme_routes = loco_rs::controller::Routes::new().add("/theme", post(theme::set_theme));
+
         AppRoutes::with_default_routes()
+            .add_route(auth_routes)
+            .add_route(theme_routes)
+    }
+
+    async fn after_routes(router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
+        let taverna_config = TavernaConfig::from_env();
+
+        let domain = taverna_config.domain.clone();
+        let federation_config = activitypub_federation::config::FederationConfig::builder()
+            .domain(&domain)
+            .app_data(ctx.db.clone())
+            .debug(cfg!(debug_assertions))
+            .build()
+            .await
+            .map_err(|e| loco_rs::Error::string(&format!("Federation config error: {}", e)))?;
+
+        info!("Federation configured for domain: {}", domain);
+
+        let router = router.layer(activitypub_federation::config::FederationMiddleware::new(
+            federation_config,
+        ));
+
+        Ok(router)
     }
 
     fn register_tasks(_tasks: &mut Tasks) {}

@@ -39,8 +39,17 @@ database:
   dangerously_truncate: false
   dangerously_recreate: false
 
+auth:
+  jwt:
+    secret: {{ get_env(name="JWT_SECRET", default="dev-secret-change-in-production") }}
+    expiration: 3600
+    location:
+      from: Cookie
+      name: access_token
+
 taverna:
   base_url: "http://localhost:3000"
+  domain: "localhost:3000"
   federation:
     enabled: false
     blocked_domains: []

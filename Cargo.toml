@@ -24,9 +24,8 @@ tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-rsa = "0.9"
-sha2 = "0.10"
-base64 = "0.22"
+jsonwebtoken = "9"
+activitypub_federation = { version = "0.7.0-beta.11", features = ["axum"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tera = "1"
 pulldown-cmark = "0.11"
@@ -36,6 +35,8 @@ argon2 = "0.5"
 tower = "0.4"
 tracing = "0.1"
 anyhow = "1"
+time = "0.3"
+thiserror = "1"
 validator = { version = "0.20", features = ["derive"] }
 include_dir = "0.7"
 axum-extra = { version = "0.10", features = ["form"] }
@@ -49,3 +50,4 @@ path = "src/bin/main.rs"
 
 [dev-dependencies]
 loco-rs = { workspace = true, features = ["testing"] }
+serial_test = "3"

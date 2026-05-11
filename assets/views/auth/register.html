@@ -1,0 +1,29 @@
+{% extends "layouts/base.html" %}
+{% block title %}Register - Taverna{% endblock %}
+{% block content %}
+<h1>Register</h1>
+{% if error %}
+<div style="color:var(--accent);margin-bottom:1rem">{{ error }}</div>
+{% endif %}
+<form method="POST" action="/register" style="display:flex;flex-direction:column;gap:0.5rem;max-width:400px">
+  <div>
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" value="{{ username | default(value='') }}" required minlength="3" maxlength="30" pattern="[a-zA-Z0-9_]+" style="display:block;width:100%;padding:0.5rem">
+    <small>3-30 characters, letters, numbers, and underscores only</small>
+  </div>
+  <div>
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" value="{{ email | default(value='') }}" required style="display:block;width:100%;padding:0.5rem">
+  </div>
+  <div>
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required minlength="8" style="display:block;width:100%;padding:0.5rem">
+  </div>
+  <div>
+    <label for="password_confirm">Confirm Password</label>
+    <input type="password" id="password_confirm" name="password_confirm" required minlength="8" style="display:block;width:100%;padding:0.5rem">
+  </div>
+  <button type="submit" style="padding:0.5rem 1rem;background:var(--accent);color:white;border:none;cursor:pointer">Register</button>
+</form>
+<p style="margin-top:1rem">Already have an account? <a href="/login" style="color:var(--link)">Login</a></p>
+{% endblock %}

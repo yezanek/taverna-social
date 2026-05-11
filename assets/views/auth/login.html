@@ -1,0 +1,20 @@
+{% extends "layouts/base.html" %}
+{% block title %}Login - Taverna{% endblock %}
+{% block content %}
+<h1>Login</h1>
+{% if error %}
+<div style="color:var(--accent);margin-bottom:1rem">{{ error }}</div>
+{% endif %}
+<form method="POST" action="/login" style="display:flex;flex-direction:column;gap:0.5rem;max-width:400px">
+  <div>
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" required style="display:block;width:100%;padding:0.5rem">
+  </div>
+  <div>
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required style="display:block;width:100%;padding:0.5rem">
+  </div>
+  <button type="submit" style="padding:0.5rem 1rem;background:var(--accent);color:white;border:none;cursor:pointer">Login</button>
+</form>
+<p style="margin-top:1rem">Don't have an account? <a href="/register" style="color:var(--link)">Register</a></p>
+{% endblock %}
