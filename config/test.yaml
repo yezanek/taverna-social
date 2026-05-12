@@ -39,8 +39,17 @@ database:
   dangerously_truncate: true
   dangerously_recreate: true
 
+auth:
+  jwt:
+    secret: "test-secret-not-for-production"
+    expiration: 3600
+    location:
+      from: Cookie
+      name: access_token
+
 taverna:
   base_url: "http://localhost:5150"
+  domain: "localhost:5150"
   federation:
     enabled: false
     blocked_domains: []
