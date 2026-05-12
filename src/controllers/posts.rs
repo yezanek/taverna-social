@@ -122,6 +122,7 @@ pub async fn detail(
     let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
         .http_only(true)
         .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
         .path("/")
         .build();
     let response = helpers::render_with_theme(
@@ -136,6 +137,9 @@ pub async fn detail(
             "comments": comments_with_author,
             "user_vote": user_vote,
             "score_class": score_class,
+            "target_id": post.id,
+            "vote_url": format!("/c/{}/posts/{}/vote", slug, post.id),
+            "score": post.score,
             "slug": slug,
             "csrf_token": csrf_token,
         }),

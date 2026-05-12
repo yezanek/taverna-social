@@ -4,7 +4,8 @@
     hx-vals='{"vote":"1","csrf_token":"{{ csrf_token }}"}'
     hx-target="#vote-{{ target_id }}"
     hx-swap="outerHTML"
-    title="Upvote"
+    aria-label="Upvote"
+    aria-pressed="{% if user_vote == 1 %}true{% else %}false{% endif %}"
     style="background:none;border:none;color:var(--upvote);cursor:pointer;font-size:1.1rem;padding:0 0.25rem">
     ▲
   </button>
@@ -16,7 +17,8 @@
     hx-vals='{"vote":"-1","csrf_token":"{{ csrf_token }}"}'
     hx-target="#vote-{{ target_id }}"
     hx-swap="outerHTML"
-    title="Downvote"
+    aria-label="Downvote"
+    aria-pressed="{% if user_vote == -1 %}true{% else %}false{% endif %}"
     style="background:none;border:none;color:var(--downvote);cursor:pointer;font-size:1.1rem;padding:0 0.25rem">
     ▼
   </button>

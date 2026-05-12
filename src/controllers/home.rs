@@ -30,6 +30,7 @@ pub async fn index(
     let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
         .http_only(true)
         .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
         .path("/")
         .build();
     let response = helpers::render_with_theme(
