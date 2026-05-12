@@ -13,7 +13,7 @@ use migration::Migrator;
 use tracing::info;
 
 use crate::common::config::TavernaConfig;
-use crate::controllers::{auth, theme};
+use crate::controllers::{auth, communities, home, posts, theme};
 use crate::initializers;
 use axum::Extension;
 
@@ -58,9 +58,36 @@ impl Hooks for App {
 
         let theme_routes = loco_rs::controller::Routes::new().add("/theme", post(theme::set_theme));
 
+        let home_routes = loco_rs::controller::Routes::new().add("/", get(home::index));
+
+        let community_routes = loco_rs::controller::Routes::new()
+            .add("/c/", get(communities::list))
+            .add("/c/{slug}", get(communities::feed))
+            .add("/c/{slug}/new", get(communities::new_post_form))
+            .add("/c/{slug}/posts", post(communities::create_post))
+            .add("/c/{slug}/join", post(communities::join))
+            .add("/c/{slug}/leave", post(communities::leave))
+            .add(
+                "/c/{slug}/settings",
+                get(communities::settings_form).post(communities::update_settings),
+            );
+
+        let post_routes = loco_rs::controller::Routes::new()
+            .add("/c/{slug}/posts/{id}", get(posts::detail))
+            .add("/c/{slug}/posts/{id}/vote", post(posts::vote))
+            .add("/c/{slug}/posts/{id}/delete", post(posts::delete))
+            .add("/c/{slug}/posts/{id}/comments", post(posts::create_comment))
+            .add(
+                "/c/{slug}/posts/{id}/comments/{cid}/vote",
+                post(posts::vote_comment),
+            );
+
         AppRoutes::with_default_routes()
             .add_route(auth_routes)
             .add_route(theme_routes)
+            .add_route(home_routes)
+            .add_route(community_routes)
+            .add_route(post_routes)
     }
 
     async fn after_routes(router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
@@ -86,6 +113,10 @@ impl Hooks for App {
             let router = router.layer(Extension(taverna_config));
             return Ok(router);
         }
+
+        let router = router.layer(axum::middleware::from_fn(
+            initializers::theme_middleware::theme_middleware,
+        ));
 
         let router = router.layer(Extension(taverna_config));
         Ok(router)

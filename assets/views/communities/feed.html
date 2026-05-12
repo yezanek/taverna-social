@@ -1,0 +1,30 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ community.name }} - Taverna{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ community.name }}</h1>
+  {% if description_rendered %}
+    <div class="description">{{ description_rendered | safe }}</div>
+  {% endif %}
+  <div style="margin-top:0.5rem">
+    {% if is_member %}
+      <form method="POST" action="/c/{{ community.slug }}/leave" style="display:inline">
+        <button type="submit" class="btn">Leave</button>
+      </form>
+      <a href="/c/{{ community.slug }}/new" class="btn" style="margin-left:0.5rem">New Post</a>
+    {% else %}
+      <form method="POST" action="/c/{{ community.slug }}/join" style="display:inline">
+        <button type="submit" class="btn">Join</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if posts %}
+  {% for post in posts %}
+    {% include "partials/post_card.html" %}
+  {% endfor %}
+{% else %}
+  <p>No posts yet in this community.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,115 @@
+use crate::models::_entities::votes;
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use tracing::instrument;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum VoteAction {
+    Added,
+    Changed,
+    Removed,
+}
+
+pub struct VoteModel;
+
+impl VoteModel {
+    #[instrument(skip(db))]
+    pub async fn cast_vote(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+        post_id: Option<Uuid>,
+        comment_id: Option<Uuid>,
+        value: i16,
+    ) -> Result<VoteAction, sea_orm::DbErr> {
+        let value = if value > 0 { 1 } else { -1 };
+
+        let existing = if let Some(pid) = post_id {
+            votes::Entity::find()
+                .filter(votes::Column::UserId.eq(user_id))
+                .filter(votes::Column::PostId.eq(pid))
+                .one(db)
+                .await?
+        } else if let Some(cid) = comment_id {
+            votes::Entity::find()
+                .filter(votes::Column::UserId.eq(user_id))
+                .filter(votes::Column::CommentId.eq(cid))
+                .one(db)
+                .await?
+        } else {
+            return Err(sea_orm::DbErr::RecordNotFound(
+                "No target specified".to_string(),
+            ));
+        };
+
+        if let Some(existing_vote) = existing {
+            if existing_vote.value == value {
+                votes::Entity::delete_by_id(existing_vote.id)
+                    .exec(db)
+                    .await?;
+                Self::recalculate_after_vote(db, post_id, comment_id).await?;
+                return Ok(VoteAction::Removed);
+            } else {
+                let mut active: votes::ActiveModel = existing_vote.into();
+                active.value = Set(value);
+                active.update(db).await?;
+                Self::recalculate_after_vote(db, post_id, comment_id).await?;
+                return Ok(VoteAction::Changed);
+            }
+        }
+
+        votes::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            user_id: Set(user_id),
+            post_id: Set(post_id),
+            comment_id: Set(comment_id),
+            value: Set(value),
+            created_at: Set(chrono::Utc::now().into()),
+        }
+        .insert(db)
+        .await?;
+
+        Self::recalculate_after_vote(db, post_id, comment_id).await?;
+        Ok(VoteAction::Added)
+    }
+
+    async fn recalculate_after_vote(
+        db: &DatabaseConnection,
+        post_id: Option<Uuid>,
+        comment_id: Option<Uuid>,
+    ) -> Result<(), sea_orm::DbErr> {
+        if let Some(pid) = post_id {
+            crate::models::posts::PostModel::recalculate_score(db, pid).await?;
+        } else if let Some(cid) = comment_id {
+            crate::models::comments::CommentModel::recalculate_score(db, cid).await?;
+        }
+        Ok(())
+    }
+
+    #[instrument(skip(db))]
+    pub async fn get_user_vote_on_post(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<Option<i16>, sea_orm::DbErr> {
+        votes::Entity::find()
+            .filter(votes::Column::UserId.eq(user_id))
+            .filter(votes::Column::PostId.eq(post_id))
+            .one(db)
+            .await
+            .map(|v| v.map(|v| v.value))
+    }
+
+    #[instrument(skip(db))]
+    pub async fn get_user_vote_on_comment(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+        comment_id: Uuid,
+    ) -> Result<Option<i16>, sea_orm::DbErr> {
+        votes::Entity::find()
+            .filter(votes::Column::UserId.eq(user_id))
+            .filter(votes::Column::CommentId.eq(comment_id))
+            .one(db)
+            .await
+            .map(|v| v.map(|v| v.value))
+    }
+}
