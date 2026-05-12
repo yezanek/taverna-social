@@ -90,7 +90,7 @@ impl Hooks for App {
             .add_route(post_routes)
     }
 
-    async fn after_routes(router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
+    async fn after_routes(mut router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
         let taverna_config = TavernaConfig::from_env()
             .map_err(|e| loco_rs::Error::string(&format!("Config error: {}", e)))?;
 
@@ -106,12 +106,9 @@ impl Hooks for App {
 
             info!("Federation configured for domain: {}", domain);
 
-            let router = router.layer(activitypub_federation::config::FederationMiddleware::new(
+            router = router.layer(activitypub_federation::config::FederationMiddleware::new(
                 federation_config,
             ));
-
-            let router = router.layer(Extension(taverna_config));
-            return Ok(router);
         }
 
         let router = router.layer(axum::middleware::from_fn(
