@@ -4,6 +4,7 @@
 <h1>New Post in {{ community.name }}</h1>
 <div class="card">
   <form method="POST" action="/c/{{ community.slug }}/posts">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="form-row">
       <label for="title">Title</label>
       <input type="text" name="title" id="title" required maxlength="300" class="form-input">

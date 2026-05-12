@@ -1,9 +1,10 @@
 use crate::models::_entities::votes;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum VoteAction {
     Added,
     Changed,
@@ -22,12 +23,10 @@ impl VoteModel {
         value: i16,
     ) -> Result<VoteAction, sea_orm::DbErr> {
         if value != 1 && value != -1 {
-            return Err(sea_orm::DbErr::RecordNotFound(
-                "Vote must be 1 or -1".to_string(),
-            ));
+            return Err(sea_orm::DbErr::Custom("Vote must be 1 or -1".to_string()));
         }
         if post_id.is_some() == comment_id.is_some() {
-            return Err(sea_orm::DbErr::RecordNotFound(
+            return Err(sea_orm::DbErr::Custom(
                 "Exactly one of post_id or comment_id must be set".to_string(),
             ));
         }
@@ -38,16 +37,13 @@ impl VoteModel {
                 .filter(votes::Column::PostId.eq(pid))
                 .one(db)
                 .await?
-        } else if let Some(cid) = comment_id {
+        } else {
+            let cid = comment_id.unwrap();
             votes::Entity::find()
                 .filter(votes::Column::UserId.eq(user_id))
                 .filter(votes::Column::CommentId.eq(cid))
                 .one(db)
                 .await?
-        } else {
-            return Err(sea_orm::DbErr::RecordNotFound(
-                "No target specified".to_string(),
-            ));
         };
 
         if let Some(existing_vote) = existing {

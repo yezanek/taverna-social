@@ -1,7 +1,7 @@
 <div class="vote-buttons" id="vote-{{ target_id }}">
   <button class="vote-btn upvote {% if user_vote == 1 %}active{% endif %}"
     hx-post="{{ vote_url }}"
-    hx-vals='{"vote":"1"}'
+    hx-vals='{"vote":"1","csrf_token":"{{ csrf_token }}"}'
     hx-target="#vote-{{ target_id }}"
     hx-swap="outerHTML"
     title="Upvote"
@@ -13,7 +13,7 @@
   </span>
   <button class="vote-btn downvote {% if user_vote == -1 %}active{% endif %}"
     hx-post="{{ vote_url }}"
-    hx-vals='{"vote":"-1"}'
+    hx-vals='{"vote":"-1","csrf_token":"{{ csrf_token }}"}'
     hx-target="#vote-{{ target_id }}"
     hx-swap="outerHTML"
     title="Downvote"

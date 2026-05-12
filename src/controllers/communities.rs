@@ -25,6 +25,8 @@ pub struct CreatePostForm {
     pub body: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,11 +39,12 @@ pub struct CommunitySettingsForm {
     pub csrf_token: Option<String>,
 }
 
-#[instrument(skip(v, ctx, theme))]
+#[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn list(
     ViewEngine(v): ViewEngine<TeraView>,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
+    jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
     let page = 0;
@@ -49,22 +52,31 @@ pub async fn list(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    helpers::render_with_theme(
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .build();
+    let response = helpers::render_with_theme(
         &v,
         "communities/list.html",
         json!({
             "current_user": current_user,
             "communities": communities,
+            "csrf_token": csrf_token,
         }),
         &theme,
-    )
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
 }
 
-#[instrument(skip(v, ctx, theme))]
+#[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn feed(
     ViewEngine(v): ViewEngine<TeraView>,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
+    jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
     Path(slug): Path<String>,
 ) -> Result<Response> {
@@ -92,7 +104,13 @@ pub async fn feed(
         .map(render_markdown)
         .unwrap_or_default();
 
-    helpers::render_with_theme(
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .build();
+    let response = helpers::render_with_theme(
         &v,
         "communities/feed.html",
         json!({
@@ -101,16 +119,19 @@ pub async fn feed(
             "description_rendered": description_rendered,
             "is_member": is_member,
             "posts": posts,
+            "csrf_token": csrf_token,
         }),
         &theme,
-    )
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
 }
 
-#[instrument(skip(v, ctx, theme))]
+#[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn new_post_form(
     ViewEngine(v): ViewEngine<TeraView>,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
+    jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
     Path(slug): Path<String>,
 ) -> Result<Response> {
@@ -127,22 +148,32 @@ pub async fn new_post_form(
         return Err(Error::Unauthorized("You must join to post".to_string()));
     }
 
-    helpers::render_with_theme(
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .build();
+    let response = helpers::render_with_theme(
         &v,
         "communities/new_post.html",
         json!({
             "current_user": current_user,
             "community": community,
+            "csrf_token": csrf_token,
         }),
         &theme,
-    )
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
 }
 
-#[instrument(skip(ctx, form))]
+#[instrument(skip(ctx, form, jar, headers, taverna))]
 pub async fn create_post(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
+    jar: CookieJar,
     Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Form(form): Form<CreatePostForm>,
 ) -> Result<Response> {
@@ -157,6 +188,10 @@ pub async fn create_post(
 
     if role.is_none() {
         return Err(Error::Unauthorized("You must join to post".to_string()));
+    }
+
+    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
     PostModel::create(
@@ -174,16 +209,23 @@ pub async fn create_post(
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
-#[instrument(skip(ctx))]
+#[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn join(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
 
     CommunityModel::add_member(&ctx.db, community.id, current_user.id, "member")
         .await
@@ -192,16 +234,23 @@ pub async fn join(
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
-#[instrument(skip(ctx))]
+#[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn leave(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
 
     CommunityModel::remove_member(&ctx.db, community.id, current_user.id)
         .await
@@ -210,7 +259,7 @@ pub async fn leave(
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
-#[instrument(skip(v, ctx, theme))]
+#[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn settings_form(
     ViewEngine(v): ViewEngine<TeraView>,
     State(ctx): State<AppContext>,
@@ -251,7 +300,7 @@ pub async fn settings_form(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
-#[instrument(skip(ctx, form))]
+#[instrument(skip(ctx, form, jar, headers, taverna))]
 pub async fn update_settings(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,

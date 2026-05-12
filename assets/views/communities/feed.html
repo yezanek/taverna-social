@@ -9,11 +9,13 @@
   <div style="margin-top:0.5rem">
     {% if is_member %}
       <form method="POST" action="/c/{{ community.slug }}/leave" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn">Leave</button>
       </form>
       <a href="/c/{{ community.slug }}/new" class="btn" style="margin-left:0.5rem">New Post</a>
     {% else %}
       <form method="POST" action="/c/{{ community.slug }}/join" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn">Join</button>
       </form>
     {% endif %}

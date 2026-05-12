@@ -8,7 +8,7 @@
   <div class="vote-buttons" id="vote-{{ comment.id }}" style="display:flex;align-items:center;gap:0.25rem;margin-top:0.25rem">
     <button class="vote-btn upvote"
       hx-post="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/vote"
-      hx-vals='{"vote":"1"}'
+      hx-vals='{"vote":"1","csrf_token":"{{ csrf_token }}"}'
       hx-target="#vote-{{ comment.id }}"
       hx-swap="outerHTML"
       title="Upvote"
@@ -20,7 +20,7 @@
     </span>
     <button class="vote-btn downvote"
       hx-post="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/vote"
-      hx-vals='{"vote":"-1"}'
+      hx-vals='{"vote":"-1","csrf_token":"{{ csrf_token }}"}'
       hx-target="#vote-{{ comment.id }}"
       hx-swap="outerHTML"
       title="Downvote"
@@ -34,6 +34,7 @@
       Reply
     </button>
     <form id="reply-form-{{ comment.id }}" method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments" style="display:none;margin-top:0.5rem">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="parent_id" value="{{ comment.id }}">
       <textarea name="body" required style="width:100%;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem"></textarea>
       <button type="submit" class="btn" style="margin-top:0.25rem">Reply</button>

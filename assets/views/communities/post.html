@@ -17,7 +17,7 @@
   <div class="vote-buttons" id="vote-{{ post.id }}" style="display:flex;align-items:center;gap:0.25rem;margin-top:0.5rem">
     <button class="vote-btn upvote {% if user_vote == 1 %}active{% endif %}"
       hx-post="/c/{{ slug }}/posts/{{ post.id }}/vote"
-      hx-vals='{"vote":"1"}'
+      hx-vals='{"vote":"1","csrf_token":"{{ csrf_token }}"}'
       hx-target="#vote-{{ post.id }}"
       hx-swap="outerHTML"
       title="Upvote"
@@ -29,7 +29,7 @@
     </span>
     <button class="vote-btn downvote {% if user_vote == -1 %}active{% endif %}"
       hx-post="/c/{{ slug }}/posts/{{ post.id }}/vote"
-      hx-vals='{"vote":"-1"}'
+      hx-vals='{"vote":"-1","csrf_token":"{{ csrf_token }}"}'
       hx-target="#vote-{{ post.id }}"
       hx-swap="outerHTML"
       title="Downvote"
@@ -43,6 +43,7 @@
 {% if current_user %}
   <div class="card">
     <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div style="margin-bottom:0.5rem">
         <textarea name="body" required class="comment-input" style="width:100%;min-height:80px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem"></textarea>
       </div>
