@@ -21,7 +21,16 @@ impl VoteModel {
         comment_id: Option<Uuid>,
         value: i16,
     ) -> Result<VoteAction, sea_orm::DbErr> {
-        let value = if value > 0 { 1 } else { -1 };
+        if value != 1 && value != -1 {
+            return Err(sea_orm::DbErr::RecordNotFound(
+                "Vote must be 1 or -1".to_string(),
+            ));
+        }
+        if post_id.is_some() == comment_id.is_some() {
+            return Err(sea_orm::DbErr::RecordNotFound(
+                "Exactly one of post_id or comment_id must be set".to_string(),
+            ));
+        }
 
         let existing = if let Some(pid) = post_id {
             votes::Entity::find()

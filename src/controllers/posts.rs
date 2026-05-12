@@ -47,6 +47,10 @@ pub async fn detail(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
     let author = UserModel::find_by_id(&ctx.db, post.author_id)
         .await
         .map_err(|_| Error::InternalServerError)?
@@ -132,10 +136,19 @@ pub async fn vote(
     Path((slug, post_id)): Path<(String, Uuid)>,
     Form(form): Form<VoteForm>,
 ) -> Result<Response> {
-    let _community = CommunityModel::find_by_slug(&ctx.db, &slug)
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
 
     VoteModel::cast_vote(&ctx.db, current_user.id, Some(post_id), None, form.vote)
         .await
@@ -179,7 +192,7 @@ pub async fn delete(
     AuthUser(current_user): AuthUser,
     Path((slug, post_id)): Path<(String, Uuid)>,
 ) -> Result<Response> {
-    let _community = CommunityModel::find_by_slug(&ctx.db, &slug)
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
@@ -188,6 +201,10 @@ pub async fn delete(
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
 
     if post.author_id != current_user.id && !current_user.is_admin {
         return Err(Error::Unauthorized("Not authorized".to_string()));
@@ -208,15 +225,19 @@ pub async fn create_comment(
     Path((slug, post_id)): Path<(String, Uuid)>,
     Form(form): Form<CommentForm>,
 ) -> Result<Response> {
-    let _community = CommunityModel::find_by_slug(&ctx.db, &slug)
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
-    let _post = PostModel::find_by_id(&ctx.db, post_id)
+    let post = PostModel::find_by_id(&ctx.db, post_id)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
 
     CommentModel::create(
         &ctx.db,
@@ -244,6 +265,20 @@ pub async fn vote_comment(
     Path((slug, post_id, comment_id)): Path<(String, Uuid, Uuid)>,
     Form(form): Form<VoteForm>,
 ) -> Result<Response> {
+    let _community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let comment = CommentModel::find_by_id(&ctx.db, comment_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if comment.post_id != post_id {
+        return Err(Error::NotFound);
+    }
+
     VoteModel::cast_vote(&ctx.db, current_user.id, None, Some(comment_id), form.vote)
         .await
         .map_err(|_| Error::InternalServerError)?;

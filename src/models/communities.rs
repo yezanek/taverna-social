@@ -183,6 +183,9 @@ impl CommunityModel {
         Ok(())
     }
 
+    const MAX_NAME_LEN: usize = 100;
+    const MAX_DESCRIPTION_LEN: usize = 5000;
+
     #[instrument(skip(db))]
     pub async fn update_settings(
         db: &DatabaseConnection,
@@ -199,9 +202,28 @@ impl CommunityModel {
             .into();
 
         if let Some(name) = name {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err(CommunityError::Validation(
+                    "Name cannot be empty".to_string(),
+                ));
+            }
+            if name.len() > Self::MAX_NAME_LEN {
+                return Err(CommunityError::Validation(format!(
+                    "Name must be at most {} characters",
+                    Self::MAX_NAME_LEN
+                )));
+            }
             community.name = Set(name.to_string());
         }
         if let Some(desc) = description {
+            let desc = desc.trim();
+            if desc.len() > Self::MAX_DESCRIPTION_LEN {
+                return Err(CommunityError::Validation(format!(
+                    "Description must be at most {} characters",
+                    Self::MAX_DESCRIPTION_LEN
+                )));
+            }
             community.description = Set(Some(desc.to_string()));
         }
         if let Some(nsfw) = is_nsfw {

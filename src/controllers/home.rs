@@ -19,7 +19,10 @@ pub async fn index(
 ) -> Result<Response> {
     let (posts, _num_pages) = PostModel::list_all(&ctx.db, 0, PER_PAGE)
         .await
-        .map_err(|_| Error::InternalServerError)?;
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to list posts");
+            Error::InternalServerError
+        })?;
 
     helpers::render_with_theme(
         &v,

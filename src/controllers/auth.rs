@@ -241,7 +241,7 @@ pub async fn logout(
     Ok((jar.add(access_cookie).add(refresh_cookie), response).into_response())
 }
 
-fn validate_csrf(
+pub(crate) fn validate_csrf(
     jar: &CookieJar,
     form_token: Option<&str>,
     headers: &axum::http::HeaderMap,

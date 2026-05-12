@@ -37,7 +37,9 @@ impl PostModel {
                 "Title must be 1-300 characters".to_string(),
             ));
         }
-        if body.is_none() && url.is_none() {
+        let body_effective = body.map(|s| s.trim()).filter(|s| !s.is_empty());
+        let url_effective = url.map(|s| s.trim()).filter(|s| !s.is_empty());
+        if body_effective.is_none() && url_effective.is_none() {
             return Err(PostError::Validation(
                 "Post must have body or URL".to_string(),
             ));
@@ -180,8 +182,12 @@ impl PostModel {
             .await?
             .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?
             .into();
-        let current_count = post.comment_count.take()
-            .ok_or(sea_orm::DbErr::RecordNotFound("Comment count missing".to_string()))?;
+        let current_count = post
+            .comment_count
+            .take()
+            .ok_or(sea_orm::DbErr::RecordNotFound(
+                "Comment count missing".to_string(),
+            ))?;
         post.comment_count = Set(current_count + 1);
         post.updated_at = Set(chrono::Utc::now().into());
         post.update(db).await?;

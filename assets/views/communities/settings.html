@@ -4,6 +4,7 @@
 <h1>Community Settings: {{ community.name }}</h1>
 <div class="card">
   <form method="POST" action="/c/{{ community.slug }}/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token | default(value='') }}">
     <div style="margin-bottom:0.5rem">
       <label for="name">Name</label>
       <input type="text" name="name" id="name" value="{{ community.name }}" style="width:100%;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">

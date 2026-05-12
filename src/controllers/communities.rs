@@ -1,5 +1,7 @@
 use axum::extract::Path;
+use axum::http::HeaderMap;
 use axum::{Extension, Form};
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use loco_rs::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -7,6 +9,7 @@ use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
 use crate::common::markdown::render_markdown;
+use crate::controllers::auth::validate_csrf;
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::communities::CommunityModel;
@@ -30,6 +33,8 @@ pub struct CommunitySettingsForm {
     pub description: Option<String>,
     pub is_nsfw: Option<String>,
     pub posting_restricted: Option<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
 }
 
 #[instrument(skip(v, ctx, theme))]
@@ -210,6 +215,7 @@ pub async fn settings_form(
     ViewEngine(v): ViewEngine<TeraView>,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
+    jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
     Path(slug): Path<String>,
 ) -> Result<Response> {
@@ -226,21 +232,32 @@ pub async fn settings_form(
         return Err(Error::Unauthorized("Moderator access required".to_string()));
     }
 
-    helpers::render_with_theme(
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .build();
+    let response = helpers::render_with_theme(
         &v,
         "communities/settings.html",
         json!({
             "current_user": current_user,
             "community": community,
+            "csrf_token": csrf_token,
         }),
         &theme,
-    )
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 #[instrument(skip(ctx, form))]
 pub async fn update_settings(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Form(form): Form<CommunitySettingsForm>,
 ) -> Result<Response> {
@@ -255,6 +272,10 @@ pub async fn update_settings(
 
     if role.as_deref() != Some("moderator") && !current_user.is_admin {
         return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
     CommunityModel::update_settings(

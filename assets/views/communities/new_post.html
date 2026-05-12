@@ -4,17 +4,17 @@
 <h1>New Post in {{ community.name }}</h1>
 <div class="card">
   <form method="POST" action="/c/{{ community.slug }}/posts">
-    <div style="margin-bottom:0.5rem">
+    <div class="form-row">
       <label for="title">Title</label>
-      <input type="text" name="title" id="title" required maxlength="300" style="width:100%;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">
+      <input type="text" name="title" id="title" required maxlength="300" class="form-input">
     </div>
-    <div style="margin-bottom:0.5rem">
+    <div class="form-row">
       <label for="body">Body (Markdown)</label>
-      <textarea name="body" id="body" style="width:100%;min-height:150px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem"></textarea>
+      <textarea name="body" id="body" class="form-textarea"></textarea>
     </div>
-    <div style="margin-bottom:0.5rem">
+    <div class="form-row">
       <label for="url">URL</label>
-      <input type="url" name="url" id="url" style="width:100%;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">
+      <input type="url" name="url" id="url" class="form-input">
     </div>
     <button type="submit" class="btn">Submit</button>
   </form>

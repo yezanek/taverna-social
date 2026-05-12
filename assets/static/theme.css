@@ -101,3 +101,26 @@ nav {
 .theme-switcher button:hover {
   background: rgba(255,255,255,0.15);
 }
+
+.form-row {
+  margin-bottom: 0.5rem;
+}
+.form-input {
+  width: 100%;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem;
+  box-sizing: border-box;
+}
+.form-textarea {
+  width: 100%;
+  min-height: 150px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem;
+  box-sizing: border-box;
+}

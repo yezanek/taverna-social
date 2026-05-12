@@ -1,8 +1,8 @@
 use crate::models::_entities::{comments, votes};
 use sea_orm::sea_query::Value;
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
-    QueryResult, Statement,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
+    QueryFilter, QueryResult, Set, Statement,
 };
 use tracing::instrument;
 use uuid::Uuid;
@@ -89,6 +89,9 @@ impl CommentModel {
             let parent = Self::raw_find_by_id(db, pid)
                 .await?
                 .ok_or(CommentError::NotFound)?;
+            if parent.post_id != post_id {
+                return Err(CommentError::NotFound);
+            }
             format!("{}.{}", parent.path, comment_seg)
         } else {
             format!("{}.{}", post_seg, comment_seg)
@@ -177,16 +180,16 @@ impl CommentModel {
             .await?;
         let score: i32 = all_votes.iter().map(|v| v.value as i32).sum();
 
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE comments SET score = $1, updated_at = $2 WHERE id = $3",
-            vec![
-                Value::Int(Some(score)),
-                Value::ChronoDateTimeUtc(Some(Box::new(chrono::Utc::now()))),
-                Value::Uuid(Some(Box::new(comment_id))),
-            ],
-        );
-        db.execute(stmt).await?;
+        let mut comment: comments::ActiveModel = comments::Entity::find_by_id(comment_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound(
+                "Comment not found".to_string(),
+            ))?
+            .into();
+        comment.score = Set(score);
+        comment.updated_at = Set(chrono::Utc::now().into());
+        comment.update(db).await?;
 
         Ok(score)
     }
@@ -196,15 +199,16 @@ impl CommentModel {
         db: &DatabaseConnection,
         comment_id: Uuid,
     ) -> Result<(), sea_orm::DbErr> {
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE comments SET is_deleted = true, updated_at = $1 WHERE id = $2",
-            vec![
-                Value::ChronoDateTimeUtc(Some(Box::new(chrono::Utc::now()))),
-                Value::Uuid(Some(Box::new(comment_id))),
-            ],
-        );
-        db.execute(stmt).await?;
+        let mut comment: comments::ActiveModel = comments::Entity::find_by_id(comment_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound(
+                "Comment not found".to_string(),
+            ))?
+            .into();
+        comment.is_deleted = Set(true);
+        comment.updated_at = Set(chrono::Utc::now().into());
+        comment.update(db).await?;
         Ok(())
     }
 }
