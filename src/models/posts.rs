@@ -180,7 +180,8 @@ impl PostModel {
             .await?
             .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?
             .into();
-        let current_count = post.comment_count.clone().unwrap();
+        let current_count = post.comment_count.take()
+            .ok_or(sea_orm::DbErr::RecordNotFound("Comment count missing".to_string()))?;
         post.comment_count = Set(current_count + 1);
         post.updated_at = Set(chrono::Utc::now().into());
         post.update(db).await?;
