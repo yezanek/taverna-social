@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use axum::{Extension, Router as AxumRouter};
 use loco_rs::{
-    app::{AppContext, Initializer},
-    controller::views::{engines, ViewEngine},
     Result,
+    app::{AppContext, Initializer},
+    controller::views::{ViewEngine, engines},
 };
 
 pub struct ViewEngineInitializer;

@@ -1,5 +1,5 @@
 use ammonia::clean;
-use pulldown_cmark::{html, Parser};
+use pulldown_cmark::{Parser, html};
 
 pub fn render_markdown(input: &str) -> String {
     let parser = Parser::new(input);

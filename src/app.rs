@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use axum::Router as AxumRouter;
 use loco_rs::{
+    Result,
     app::{AppContext, Hooks, Initializer},
-    boot::{create_app, BootResult, StartMode},
+    boot::{BootResult, StartMode, create_app},
     config::Config,
     controller::AppRoutes,
     environment::Environment,
     task::Tasks,
-    Result,
 };
 use migration::Migrator;
 use tracing::info;

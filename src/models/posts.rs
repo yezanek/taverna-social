@@ -4,6 +4,7 @@ use sea_orm::{
     QueryOrder, Set,
 };
 use tracing::instrument;
+use url::Url;
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +40,16 @@ impl PostModel {
         }
         let body_effective = body.map(|s| s.trim()).filter(|s| !s.is_empty());
         let url_effective = url.map(|s| s.trim()).filter(|s| !s.is_empty());
+        if let Some(u) = &url_effective {
+            let parsed = Url::parse(u)
+                .map_err(|_| PostError::Validation("Invalid URL format".to_string()))?;
+            let scheme = parsed.scheme();
+            if scheme != "http" && scheme != "https" {
+                return Err(PostError::Validation(
+                    "URL must use http or https scheme".to_string(),
+                ));
+            }
+        }
         if body_effective.is_none() && url_effective.is_none() {
             return Err(PostError::Validation(
                 "Post must have body or URL".to_string(),

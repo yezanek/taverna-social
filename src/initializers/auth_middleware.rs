@@ -2,7 +2,7 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
 };
-use loco_rs::{app::AppContext, Error};
+use loco_rs::{Error, app::AppContext};
 use tracing::instrument;
 
 use crate::common::jwt::verify_token;

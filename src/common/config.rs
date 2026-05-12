@@ -27,7 +27,7 @@ impl TavernaConfig {
                     return Err(format!(
                         "Invalid FEDERATION_ENABLED value '{}': expected 'true' or 'false'",
                         other
-                    ))
+                    ));
                 }
             },
             Err(_) => false,
