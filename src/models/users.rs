@@ -50,11 +50,15 @@ impl UserModel {
         }
 
         let salt = SaltString::generate(&mut OsRng);
-        let argon2 = Argon2::default();
-        let password_hash = argon2
-            .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| UserError::Other(anyhow::anyhow!("Password hashing failed: {}", e)))?
-            .to_string();
+        let password = password.to_string();
+        let password_hash = tokio::task::spawn_blocking(move || {
+            Argon2::default()
+                .hash_password(password.as_bytes(), &salt)
+                .map_err(|e| UserError::Other(anyhow::anyhow!("Password hashing failed: {}", e)))
+                .map(|h| h.to_string())
+        })
+        .await
+        .map_err(|e| UserError::Other(anyhow::anyhow!("Blocking task failed: {}", e)))??;
 
         let keypair = Self::generate_keypair()
             .map_err(|e| UserError::Other(anyhow::anyhow!("Keypair generation failed: {}", e)))?;
@@ -118,8 +122,9 @@ impl UserModel {
         db: &DatabaseConnection,
         username: &str,
     ) -> Result<Option<users::Model>, sea_orm::DbErr> {
+        let username = username.to_lowercase();
         users::Entity::find()
-            .filter(users::Column::Username.eq(username))
+            .filter(users::Column::Username.eq(&username))
             .one(db)
             .await
     }
