@@ -13,7 +13,7 @@ use migration::Migrator;
 use tracing::info;
 
 use crate::common::config::TavernaConfig;
-use crate::controllers::{auth, communities, home, posts, theme};
+use crate::controllers::{auth, communities, federation, home, posts, theme};
 use crate::initializers;
 use axum::Extension;
 
@@ -70,6 +70,15 @@ impl Hooks for App {
             .add(
                 "/c/{slug}/settings",
                 get(communities::settings_form).post(communities::update_settings),
+            )
+            .add("/c/{slug}/inbox", post(federation::inbox::community_inbox))
+            .add(
+                "/c/{slug}/outbox",
+                get(federation::actors::community_outbox),
+            )
+            .add(
+                "/c/{slug}/followers",
+                get(federation::actors::community_followers),
             );
 
         let post_routes = loco_rs::controller::Routes::new()
@@ -82,34 +91,69 @@ impl Hooks for App {
                 post(posts::vote_comment),
             );
 
+        let user_routes = loco_rs::controller::Routes::new()
+            .add("/u/{username}", get(federation::actors::user_actor))
+            .add("/u/{username}/inbox", post(federation::inbox::user_inbox))
+            .add("/u/{username}/outbox", get(federation::actors::user_outbox))
+            .add(
+                "/u/{username}/followers",
+                get(federation::actors::user_followers),
+            )
+            .add(
+                "/u/{username}/following",
+                get(federation::actors::user_following),
+            );
+
+        let webfinger_routes = loco_rs::controller::Routes::new().add(
+            "/.well-known/webfinger",
+            get(federation::webfinger::webfinger),
+        );
+
+        let nodeinfo_routes = loco_rs::controller::Routes::new()
+            .add(
+                "/.well-known/nodeinfo",
+                get(federation::nodeinfo::well_known_nodeinfo),
+            )
+            .add("/nodeinfo/2.0", get(federation::nodeinfo::nodeinfo_v2));
+
+        let note_routes = loco_rs::controller::Routes::new()
+            .add("/posts/{id}", get(federation::notes::post_note))
+            .add("/comments/{id}", get(federation::notes::comment_note));
+
         AppRoutes::with_default_routes()
             .add_route(auth_routes)
             .add_route(theme_routes)
             .add_route(home_routes)
             .add_route(community_routes)
             .add_route(post_routes)
+            .add_route(user_routes)
+            .add_route(webfinger_routes)
+            .add_route(nodeinfo_routes)
+            .add_route(note_routes)
     }
 
-    async fn after_routes(mut router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
+    async fn after_routes(router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
         let taverna_config = TavernaConfig::from_env()
             .map_err(|e| loco_rs::Error::string(&format!("Config error: {}", e)))?;
 
-        if taverna_config.federation.enabled {
-            let domain = taverna_config.domain.clone();
-            let federation_config = activitypub_federation::config::FederationConfig::builder()
-                .domain(&domain)
-                .app_data(ctx.db.clone())
-                .debug(cfg!(debug_assertions))
-                .build()
-                .await
-                .map_err(|e| loco_rs::Error::string(&format!("Federation config error: {}", e)))?;
+        let mut router = router.layer(axum::middleware::from_fn(
+            initializers::content_negotiation::content_negotiation_middleware,
+        ));
 
-            info!("Federation configured for domain: {}", domain);
+        let domain = taverna_config.domain.clone();
+        let federation_config = activitypub_federation::config::FederationConfig::builder()
+            .domain(&domain)
+            .app_data(ctx.db.clone())
+            .debug(cfg!(debug_assertions))
+            .build()
+            .await
+            .map_err(|e| loco_rs::Error::string(&format!("Federation config error: {}", e)))?;
 
-            router = router.layer(activitypub_federation::config::FederationMiddleware::new(
-                federation_config,
-            ));
-        }
+        info!("Federation configured for domain: {}", domain);
+
+        router = router.layer(activitypub_federation::config::FederationMiddleware::new(
+            federation_config,
+        ));
 
         let router = router.layer(axum::middleware::from_fn(
             initializers::theme_middleware::theme_middleware,
@@ -121,7 +165,12 @@ impl Hooks for App {
 
     fn register_tasks(_tasks: &mut Tasks) {}
 
-    async fn connect_workers(_ctx: &AppContext, _queue: &loco_rs::bgworker::Queue) -> Result<()> {
+    async fn connect_workers(ctx: &AppContext, queue: &loco_rs::bgworker::Queue) -> Result<()> {
+        queue
+            .register(crate::workers::deliver_activity::DeliverActivityWorker {
+                db: ctx.db.clone(),
+            })
+            .await?;
         Ok(())
     }
 

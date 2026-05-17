@@ -187,6 +187,54 @@ pub async fn vote(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
+    // Federation: enqueue Like/Dislike activity
+    if taverna.federation.enabled {
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let vote_activity = if form.vote > 0 {
+            serde_json::json!({
+                "@context": ap_context,
+                "id": activity_id,
+                "type": "Like",
+                "actor": current_user.ap_id,
+                "object": post.ap_id,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "published": chrono::Utc::now().to_rfc3339(),
+            })
+        } else {
+            serde_json::json!({
+                "@context": ap_context,
+                "id": activity_id,
+                "type": "Dislike",
+                "actor": current_user.ap_id,
+                "object": post.ap_id,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "published": chrono::Utc::now().to_rfc3339(),
+            })
+        };
+        let post_author = UserModel::find_by_id(&ctx.db, post.author_id)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+            .ok_or_else(|| Error::InternalServerError)?;
+        let inboxes = if post_author.is_local {
+            Vec::new()
+        } else {
+            vec![post_author.inbox_url.clone()]
+        };
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &vote_activity,
+                &current_user.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
+
     let user_vote = VoteModel::get_user_vote_on_post(&ctx.db, current_user.id, post_id)
         .await
         .map_err(|_| Error::InternalServerError)?;
@@ -250,6 +298,41 @@ pub async fn delete(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
+    // Federation: enqueue Delete activity
+    if taverna.federation.enabled {
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let delete = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Delete",
+            "actor": current_user.ap_id,
+            "object": post.ap_id,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(community_id) = post.community_id {
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+                &ctx.db,
+                community_id,
+            )
+            .await
+            .unwrap_or_default();
+            if !inboxes.is_empty() {
+                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                    &ctx.db,
+                    &delete,
+                    &current_user.ap_id,
+                    inboxes,
+                )
+                .await;
+            }
+        }
+    }
+
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
@@ -281,7 +364,7 @@ pub async fn create_comment(
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
-    CommentModel::create(
+    let comment = CommentModel::create(
         &ctx.db,
         post_id,
         current_user.id,
@@ -295,6 +378,54 @@ pub async fn create_comment(
     PostModel::increment_comment_count(&ctx.db, post_id)
         .await
         .map_err(|_| Error::InternalServerError)?;
+
+    // Federation: enqueue Create activity for comment
+    if taverna.federation.enabled {
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let note = serde_json::json!({
+            "@context": ap_context,
+            "id": comment.ap_id,
+            "type": "Note",
+            "attributedTo": current_user.ap_id,
+            "content": comment.body,
+            "inReplyTo": post.ap_id,
+            "published": comment.published_at.to_rfc3339(),
+            "url": comment.ap_id,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [],
+        });
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let create = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Create",
+            "actor": current_user.ap_id,
+            "object": note,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(community_id) = post.community_id {
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+                &ctx.db,
+                community_id,
+            )
+            .await
+            .unwrap_or_default();
+            if !inboxes.is_empty() {
+                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                    &ctx.db,
+                    &create,
+                    &current_user.ap_id,
+                    inboxes,
+                )
+                .await;
+            }
+        }
+    }
 
     Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
 }
@@ -337,6 +468,54 @@ pub async fn vote_comment(
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
+
+    // Federation: enqueue Like/Dislike activity for comment
+    if taverna.federation.enabled {
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let vote_activity = if form.vote > 0 {
+            serde_json::json!({
+                "@context": ap_context,
+                "id": activity_id,
+                "type": "Like",
+                "actor": current_user.ap_id,
+                "object": comment.ap_id,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "published": chrono::Utc::now().to_rfc3339(),
+            })
+        } else {
+            serde_json::json!({
+                "@context": ap_context,
+                "id": activity_id,
+                "type": "Dislike",
+                "actor": current_user.ap_id,
+                "object": comment.ap_id,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "published": chrono::Utc::now().to_rfc3339(),
+            })
+        };
+        let comment_author = UserModel::find_by_id(&ctx.db, comment.author_id)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+            .ok_or_else(|| Error::InternalServerError)?;
+        let inboxes = if !comment_author.is_local {
+            vec![comment_author.inbox_url.clone()]
+        } else {
+            Vec::new()
+        };
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &vote_activity,
+                &current_user.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
 
     let user_vote = VoteModel::get_user_vote_on_comment(&ctx.db, current_user.id, comment_id)
         .await
