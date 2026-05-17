@@ -255,13 +255,12 @@ pub(crate) fn validate_csrf(
             .or_else(|| headers.get("referer"))
             .and_then(|v| v.to_str().ok())
             .and_then(|v| url::Url::parse(v).ok());
-        if let Some(ref origin_url) = origin {
-            if origin_url.scheme() != base.scheme()
+        if let Some(ref origin_url) = origin
+            && (origin_url.scheme() != base.scheme()
                 || origin_url.host() != base.host()
-                || origin_url.port() != base.port()
-            {
-                return false;
-            }
+                || origin_url.port() != base.port())
+        {
+            return false;
         }
     }
     let cookie_token = jar.get("csrf_token").map(|c| c.value().to_string());

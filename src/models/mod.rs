@@ -1,6 +1,10 @@
 pub mod _entities;
 pub mod comments;
 pub mod communities;
+pub mod community_members;
+pub mod federation_objects;
+pub mod follows;
+pub mod outbound_activities;
 pub mod posts;
 pub mod users;
 pub mod votes;

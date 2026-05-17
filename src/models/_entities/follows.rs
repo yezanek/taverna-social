@@ -50,5 +50,3 @@ impl Related<super::communities::Entity> for Entity {
         Relation::Communities.def()
     }
 }
-
-impl ActiveModelBehavior for ActiveModel {}

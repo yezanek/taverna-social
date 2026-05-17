@@ -1,5 +1,6 @@
 use axum::extract::Path;
 use axum::http::HeaderMap;
+use axum::response::IntoResponse;
 use axum::{Extension, Form};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use loco_rs::prelude::*;
@@ -11,6 +12,7 @@ use crate::common::config::TavernaConfig;
 use crate::common::markdown::render_markdown;
 use crate::controllers::auth::validate_csrf;
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
+use crate::initializers::content_negotiation::RenderMode;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::communities::CommunityModel;
 use crate::models::posts::PostModel;
@@ -79,12 +81,40 @@ pub async fn feed(
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
+    Extension(render_mode): Extension<RenderMode>,
     Path(slug): Path<String>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
+
+    match render_mode {
+        RenderMode::ActivityPub => {
+            let actor = json!({
+                "@context": [
+                    "https://www.w3.org/ns/activitystreams",
+                    "https://w3id.org/security/v1"
+                ],
+                "id": community.ap_id,
+                "type": "Group",
+                "preferredUsername": community.slug,
+                "name": community.name,
+                "summary": community.description,
+                "inbox": format!("{}/inbox", community.ap_id),
+                "outbox": format!("{}/outbox", community.ap_id),
+                "followers": format!("{}/followers", community.ap_id),
+                "publicKey": {
+                    "id": format!("{}#main-key", community.ap_id),
+                    "owner": community.ap_id,
+                    "publicKeyPem": community.public_key,
+                },
+                "published": community.created_at.format("%+").to_string(),
+            });
+            return Ok(axum::Json(actor).into_response());
+        }
+        RenderMode::Html => {}
+    }
 
     let is_member = if let Some(ref user) = current_user {
         CommunityModel::get_member_role(&ctx.db, community.id, user.id)
@@ -197,7 +227,7 @@ pub async fn create_post(
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
-    PostModel::create(
+    let post = PostModel::create(
         &ctx.db,
         Some(community.id),
         current_user.id,
@@ -208,6 +238,60 @@ pub async fn create_post(
     )
     .await
     .map_err(|_| Error::InternalServerError)?;
+
+    // Federation: enqueue Create activity to community followers
+    if taverna.federation.enabled {
+        let author = crate::models::users::UserModel::find_by_id(&ctx.db, current_user.id)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+            .ok_or_else(|| Error::InternalServerError)?;
+
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+
+        let note_value = serde_json::json!({
+            "@context": ap_context,
+            "id": post.ap_id,
+            "type": "Note",
+            "attributedTo": community.ap_id,
+            "content": post.body,
+            "name": post.title,
+            "published": post.published_at.to_rfc3339(),
+            "url": post.url,
+            "to": [community.followers_url],
+            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
+        });
+
+        let activity_id = format!("{}/activities/{}", author.ap_id, uuid::Uuid::new_v4());
+        let create = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Create",
+            "actor": author.ap_id,
+            "object": note_value,
+            "to": [community.followers_url],
+            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+
+        let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+            &ctx.db,
+            community.id,
+        )
+        .await
+        .unwrap_or_default();
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &create,
+                &author.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
 
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
