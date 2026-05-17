@@ -386,3 +386,330 @@ Review every .html file in views/.
 Any element with a hardcoded colour (hex, rgb, named colour other than inherit/transparent)
 that is not inside a CSS var() call: report as MEDIUM.
 ```
+
+---
+
+## Final Acceptance Test (run once, after all five phases are complete)
+
+This is a holistic end-to-end review of the entire project against the full
+specification. It is different from the per-phase QA prompts:
+
+- Per-phase prompts check individual deliverables as they are built
+- CodeRabbit checks each PR diff for inline issues and best practices
+- **This prompt checks the finished product as a whole** — cross-cutting
+  concerns, spec compliance end-to-end, and a binary go/no-go verdict
+
+Run this once, after Phase 5 is complete and all phase QA prompts have passed.
+
+---
+
+### How to run it
+
+Start gemini-cli from the repo root with the most capable model available:
+
+```bash
+cd taverna-social
+gemini --model gemini-2.5-pro
+```
+
+Then paste the prompt below in full.
+
+---
+
+### The Prompt
+
+```
+You are a senior software engineer performing a final acceptance test of Taverna,
+a federated community platform built in Rust. Your job is to determine whether
+the project is ready to deploy and federate with real Lemmy and Mastodon instances.
+
+This is not a per-file review. You are assessing the whole system.
+
+Read these files completely before starting:
+1. SPEC.md — the authoritative specification
+2. AGENTS.md — the coding standards
+3. PHASE_5.md — the Definition of Done
+
+Then work through the following ten areas in order. For each area, read the
+relevant source files, run the relevant commands, and report findings.
+At the end, give a single verdict: PASS, PASS WITH CONDITIONS, or FAIL.
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 1 — Build integrity
+────────────────────────────────────────────────────────────────────────────────
+
+Run each of these and report the result:
+
+  cargo build --release --locked
+  cargo test --all-features
+  cargo clippy -- -D warnings
+  cargo fmt --check
+
+All four must succeed with zero errors and zero warnings.
+If any fail: FAIL — do not continue to other areas.
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 2 — Specification completeness
+────────────────────────────────────────────────────────────────────────────────
+
+Cross-reference SPEC.md against the implementation. Check:
+
+Routes (SPEC.md Section 5.1 and 5.2):
+- Every web route listed in SPEC.md is registered in src/app.rs or router setup
+- Every federation route is registered and covered by FederationMiddleware
+- POST /theme exists and sets taverna_theme cookie
+
+Data model (SPEC.md Section 4):
+- Every table in Section 4 exists in migration/src/
+- last_fetched_at is present on users and communities tables
+- All indexes listed in each table definition are present in migrations
+- outbound_activities uses TEXT[] for target_inboxes
+
+Functional requirements (SPEC.md Section 3):
+- Communities: create, join, leave, post, moderate
+- Posts: text type, link type, vote +1/-1, edit, delete
+- Comments: threaded via ltree, vote, edit, delete
+- Profiles: registration, login, follow/unfollow, profile posts
+- Theme: light, dark, sepia — POST /theme — data-theme on <html>
+
+Report any route, table, column, or feature that is in SPEC.md but missing
+from the implementation as CRITICAL.
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 3 — ActivityPub federation correctness
+────────────────────────────────────────────────────────────────────────────────
+
+This is the most critical area — federation bugs are invisible until a real
+Lemmy or Mastodon instance tries to connect.
+
+Check the following:
+
+3a. WebFinger (SPEC.md Section 6.2)
+- Handler uses extract_webfinger_name() from activitypub_federation crate
+- Handler uses build_webfinger_response() from activitypub_federation crate
+- Returns correct AP actor URL for both users (/u/:username) and communities (/c/:slug)
+- Returns 404 for unknown resources (not a 500)
+
+3b. Actor JSON-LD (SPEC.md Sections 6.2 and 6.3)
+- Person actor has: id, type, preferredUsername, inbox, outbox, followers,
+  following, publicKey (with id, owner, publicKeyPem), url, manuallyApprovesFollowers
+- Group actor has: id, type, preferredUsername, inbox, outbox, followers,
+  publicKey, attributedTo, postingRestrictedToMods, sensitive
+- Both actors include the full @context array (activitystreams + security/v1)
+
+3c. Content negotiation (SPEC.md Section 6)
+- /u/:username and /c/:slug return AP JSON when Accept contains
+  application/activity+json (uses FEDERATION_CONTENT_TYPE constant, not hardcoded)
+- Same URLs return HTML for browser Accept headers
+
+3d. HTTP signatures
+- Inbox handlers use receive_activity() from activitypub_federation crate
+  (NOT manual signature verification)
+- Outbound activities use SendActivityTask::send() (NOT raw reqwest)
+- No use of rsa:: or sha2:: crates in src/federation/ or src/controllers/federation/
+
+3e. The Announce pattern (SPEC.md Section 6.4 — critical for Lemmy)
+- Find the ActivityHandler::receive implementation for Create activity
+- When the inbox owner is a Community, after saving the post locally,
+  the code MUST build an Announce activity and call SendActivityTask::send
+  with the community as the signing actor and all follower inboxes as targets
+- If this is missing: CRITICAL — Lemmy federation is broken
+
+3f. Idempotency
+- Every ActivityHandler::receive checks if the object's ap_id already exists
+  in the database before inserting
+- No receive() implementation inserts without checking first
+
+3g. Object::verify
+- Every Object trait implementation calls verify_domains_match() in its
+  verify() method
+- Open each file in src/federation/types/ and confirm this
+
+3h. Follow/Accept cycle
+- When Follow activity is received: follow row inserted, Accept sent back
+  via SendActivityTask::send, follow marked accepted=true
+- When UndoFollow received: follow row deleted
+
+3i. NodeInfo (SPEC.md Section 6.6)
+- /nodeinfo/2.0 returns software.name = "taverna"
+- /nodeinfo/2.0 returns protocols = ["activitypub"]
+- /.well-known/nodeinfo links to /nodeinfo/2.0
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 4 — Theme system
+────────────────────────────────────────────────────────────────────────────────
+
+4a. CSS file
+- assets/static/theme.css exists
+- Contains [data-theme="light"], [data-theme="dark"], [data-theme="sepia"] blocks
+- Each block defines at minimum: --bg-primary, --bg-secondary, --bg-card,
+  --text-primary, --text-secondary, --text-muted, --border, --accent,
+  --upvote, --downvote, --link, --nav-bg, --nav-text, --score-positive,
+  --score-negative
+
+4b. Template integration
+- views/layouts/base.html has <html ... data-theme="{{ theme }}">
+- base.html links theme.css: <link rel="stylesheet" href="/static/theme.css">
+- base.html nav contains the theme switcher form (POST /theme, three buttons)
+- No JavaScript is involved in theme switching
+
+4c. Cookie
+- POST /theme handler sets cookie: name=taverna_theme, Max-Age=31536000,
+  SameSite=Lax, NOT HttpOnly
+- Invalid values default to "light"
+- Redirects to Referer or / if no Referer
+
+4d. No hardcoded colours
+- Search views/ for hex values (#[0-9a-fA-F]{3,6}) and rgb() not in theme.css
+- Any found in .html files: report as MEDIUM
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 5 — Security (SPEC.md Section 7)
+────────────────────────────────────────────────────────────────────────────────
+
+5a. Passwords: argon2id via argon2 crate — not bcrypt, not sha256, not plaintext
+
+5b. JWT: access token 1h, refresh 7d, both in httpOnly cookies
+- Login does not distinguish between wrong email and wrong password in error message
+
+5c. Banned user: AuthUser middleware checks is_banned after loading user from JWT
+
+5d. Markdown: all user content goes through pulldown-cmark then ammonia::clean()
+- Search for | safe in templates — only pre-sanitized markdown variables allowed
+
+5e. SQL: no raw string interpolation into queries — SeaORM parameterized only
+
+5f. SSRF: no raw reqwest calls for federation — activitypub_federation client only
+
+5g. Rate limiting: tower-governor applied to /*/inbox routes and POST /login,
+    POST /register
+
+5h. Authorization:
+- POST /c/:slug/settings: requires moderator or admin
+- POST /c/:slug/posts/:id/remove: requires moderator or admin
+- GET /admin, POST /admin/*: requires is_admin = true
+- POST /c/:slug/posts/:id/delete: requires author OR moderator OR admin
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 6 — Code quality
+────────────────────────────────────────────────────────────────────────────────
+
+6a. No unwrap() in production paths (outside #[cfg(test)] blocks)
+- Search: grep -rn "\.unwrap()" src/ | grep -v "#\[cfg(test)\]\|mod tests\|// unwrap-ok"
+
+6b. No todo!/unimplemented!/panic! in production code
+- Search: grep -rn "todo!\|unimplemented!\|panic!(" src/ | grep -v "test\|// panic-ok"
+
+6c. No dbg!() macros anywhere in src/
+- Search: grep -rn "dbg!(" src/
+
+6d. All public functions in models/ and controllers/ have /// doc comments
+
+6e. All database migrations have both up() and down() methods
+
+6f. Cargo.lock is committed
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 7 — Cross-cutting integration
+────────────────────────────────────────────────────────────────────────────────
+
+These are issues that only appear when all phases are complete together:
+
+7a. Theme threads through all pages
+- Every handler that renders a full HTML page extracts CurrentTheme and passes
+  it to render_with_theme (or equivalent)
+- HTMX fragment endpoints do NOT inject theme (they return partial HTML only)
+
+7b. Federation hooks are in place for all local actions
+Check that after each local action, the corresponding AP activity is enqueued:
+  - Create post in community → Create{Note} + community Announce{Create}
+  - Create profile post → Create{Note} to user followers
+  - Create comment → Create{Note}
+  - Upvote → Like{Note}; downvote → Dislike{Note}; remove vote → Undo
+  - Delete post → Delete{Note}
+  - Edit post → Update{Note}
+  - Follow user → Follow{Person}; follow community → Follow{Group}
+  - Unfollow → Undo{Follow}
+Any missing hook: CRITICAL if it's Create/Delete/Follow; MEDIUM otherwise
+
+7c. score recalculation
+- VoteModel::cast_vote always calls recalculate_score after every vote change
+  (post and comment)
+
+7d. ltree paths
+- CommentModel::create builds path correctly:
+  top-level: c{post_8}.c{comment_8}
+  reply: {parent.path}.c{comment_8}
+  Each segment starts with "c" (ltree label requirement)
+
+7e. Outbound activities gated on federation config
+- SendActivityTask::send is only called when config.taverna.federation.enabled == true
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 8 — Moderation completeness
+────────────────────────────────────────────────────────────────────────────────
+
+8a. community_bans table exists (m007_bans migration) and is registered
+
+8b. Locked post: comment form hidden in template when is_locked=true;
+    create_comment handler returns 403 for locked posts
+
+8c. Banned community member: community_bans checked before allowing post/comment
+
+8d. Instance-banned user: is_banned checked in AuthUser middleware
+
+8e. Admin dashboard exists at GET /admin
+
+8f. Error pages exist: views/errors/404.html, 403.html, 500.html
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 9 — Deployment readiness
+────────────────────────────────────────────────────────────────────────────────
+
+9a. DEPLOY.md exists and covers:
+- PostgreSQL 16 setup with uuid-ossp, ltree, pgmq extensions
+- Environment variables: DATABASE_URL, BASE_URL, TAVERNA_DOMAIN, JWT_SECRET
+- Build command: cargo build --release
+- Migration command: ./target/release/taverna-cli db migrate
+- AGPL-3.0 license note (required by activitypub_federation dependency)
+
+9b. config/production.yaml uses ${BASE_URL} and ${TAVERNA_DOMAIN}
+    (environment variable interpolation, not hardcoded values)
+
+9c. cargo deny check licenses passes (run it and report result)
+
+9d. cargo audit reports no known vulnerabilities (run it and report result)
+
+────────────────────────────────────────────────────────────────────────────────
+AREA 10 — Definition of Done (PHASE_5.md)
+────────────────────────────────────────────────────────────────────────────────
+
+Read the Definition of Done checklist from PHASE_5.md.
+Verify each item explicitly. Report any that are not satisfied.
+
+────────────────────────────────────────────────────────────────────────────────
+VERDICT
+────────────────────────────────────────────────────────────────────────────────
+
+After completing all ten areas, give one of three verdicts:
+
+PASS
+  All CRITICAL checks passed. Zero or only LOW issues remain.
+  The project is ready to deploy and federate.
+
+PASS WITH CONDITIONS
+  No CRITICAL issues. One or more MEDIUM issues remain.
+  List the conditions that must be fixed before going live.
+  The project can be deployed to a staging environment for testing.
+
+FAIL
+  One or more CRITICAL issues found.
+  List every CRITICAL issue with file and line number where possible.
+  The project must not be deployed until these are resolved.
+  Take the CRITICAL issues to opencode using /project:fix-issue.
+
+────────────────────────────────────────────────────────────────────────────────
+
+Begin with Area 1. If cargo build --release fails, stop and report FAIL immediately.
+Otherwise work through all ten areas, then give the verdict.
+```
