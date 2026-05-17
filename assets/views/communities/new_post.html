@@ -1,0 +1,23 @@
+{% extends "layouts/base.html" %}
+{% block title %}New Post - {{ community.name }} - Taverna{% endblock %}
+{% block content %}
+<h1>New Post in {{ community.name }}</h1>
+<div class="card">
+  <form method="POST" action="/c/{{ community.slug }}/posts">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="form-row">
+      <label for="title">Title</label>
+      <input type="text" name="title" id="title" required maxlength="300" class="form-input">
+    </div>
+    <div class="form-row">
+      <label for="body">Body (Markdown)</label>
+      <textarea name="body" id="body" class="form-textarea"></textarea>
+    </div>
+    <div class="form-row">
+      <label for="url">URL</label>
+      <input type="url" name="url" id="url" class="form-input">
+    </div>
+    <button type="submit" class="btn">Submit</button>
+  </form>
+</div>
+{% endblock %}

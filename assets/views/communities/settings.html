@@ -1,0 +1,31 @@
+{% extends "layouts/base.html" %}
+{% block title %}Settings - {{ community.name }} - Taverna{% endblock %}
+{% block content %}
+<h1>Community Settings: {{ community.name }}</h1>
+<div class="card">
+  <form method="POST" action="/c/{{ community.slug }}/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div style="margin-bottom:0.5rem">
+      <label for="name">Name</label>
+      <input type="text" name="name" id="name" value="{{ community.name }}" style="width:100%;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">
+    </div>
+    <div style="margin-bottom:0.5rem">
+      <label for="description">Description (Markdown)</label>
+      <textarea name="description" id="description" style="width:100%;min-height:100px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">{{ community.description }}</textarea>
+    </div>
+    <div style="margin-bottom:0.5rem">
+      <label>
+        <input type="checkbox" name="is_nsfw" {% if community.is_nsfw %}checked{% endif %}>
+        NSFW
+      </label>
+    </div>
+    <div style="margin-bottom:0.5rem">
+      <label>
+        <input type="checkbox" name="posting_restricted" {% if community.posting_restricted %}checked{% endif %}>
+        Restrict posting to moderators
+      </label>
+    </div>
+    <button type="submit" class="btn">Save</button>
+  </form>
+</div>
+{% endblock %}

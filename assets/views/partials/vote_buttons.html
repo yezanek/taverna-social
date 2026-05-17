@@ -1,0 +1,25 @@
+<div class="vote-buttons" id="vote-{{ target_id }}">
+  <button class="vote-btn upvote {% if user_vote == 1 %}active{% endif %}"
+    hx-post="{{ vote_url }}"
+    hx-vals='{"vote":"1","csrf_token":"{{ csrf_token }}"}'
+    hx-target="#vote-{{ target_id }}"
+    hx-swap="outerHTML"
+    aria-label="Upvote"
+    aria-pressed="{% if user_vote == 1 %}true{% else %}false{% endif %}"
+    style="background:none;border:none;color:var(--upvote);cursor:pointer;font-size:1.1rem;padding:0 0.25rem">
+    ▲
+  </button>
+  <span class="score {% if score_class %} {{ score_class }}{% endif %}" style="font-weight:bold;font-size:1rem;min-width:1.5rem;text-align:center;color:var(--text-secondary)">
+    {{ score }}
+  </span>
+  <button class="vote-btn downvote {% if user_vote == -1 %}active{% endif %}"
+    hx-post="{{ vote_url }}"
+    hx-vals='{"vote":"-1","csrf_token":"{{ csrf_token }}"}'
+    hx-target="#vote-{{ target_id }}"
+    hx-swap="outerHTML"
+    aria-label="Downvote"
+    aria-pressed="{% if user_vote == -1 %}true{% else %}false{% endif %}"
+    style="background:none;border:none;color:var(--downvote);cursor:pointer;font-size:1.1rem;padding:0 0.25rem">
+    ▼
+  </button>
+</div>

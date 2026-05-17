@@ -1,0 +1,40 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ post.title }} - Taverna{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ post.title }}</h1>
+  {% if body_rendered %}
+    <div class="body">{{ body_rendered | safe }}</div>
+  {% endif %}
+  {% if post.url %}
+    <p><a href="{{ post.url }}" target="_blank" rel="noopener noreferrer" style="color:var(--link)">{{ post.url }}</a></p>
+  {% endif %}
+  <div class="meta" style="color:var(--text-secondary);font-size:0.85rem;margin-top:0.5rem">
+    Posted by <a href="/u/{{ author.username }}" style="color:var(--link)">{{ author.username }}</a>
+    | {{ post.comment_count }} comments
+    | {{ post.published_at }}
+  </div>
+  {% include "partials/vote_buttons.html" %}
+</div>
+
+<h3>Comments</h3>
+{% if current_user %}
+  <div class="card">
+    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div style="margin-bottom:0.5rem">
+        <textarea name="body" required class="comment-input" style="width:100%;min-height:80px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem"></textarea>
+      </div>
+      <button type="submit" class="btn">Comment</button>
+    </form>
+  </div>
+{% endif %}
+
+{% if comments %}
+  {% for comment in comments %}
+    {% include "partials/comment.html" %}
+  {% endfor %}
+{% else %}
+  <p>No comments yet.</p>
+{% endif %}
+{% endblock %}

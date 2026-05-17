@@ -1,0 +1,15 @@
+<div class="card post-card">
+  <div class="post-title">
+    <a href="{% if community %}/c/{{ community.slug }}/posts/{{ post.id }}{% else %}#{% endif %}" style="color:var(--text-primary);text-decoration:none;font-weight:bold;font-size:1.1rem">
+      {{ post.title }}
+    </a>
+  </div>
+  {% if post.url %}
+    <div class="post-meta" style="color:var(--text-secondary);font-size:0.85rem">
+      <a href="{{ post.url }}" target="_blank" rel="noopener noreferrer" style="color:var(--link)">{{ post.url }}</a>
+    </div>
+  {% endif %}
+  <div class="post-details" style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem">
+    {{ post.score }} points | {{ post.comment_count }} comments
+  </div>
+</div>

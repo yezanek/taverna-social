@@ -1,2 +1,6 @@
 pub mod _entities;
+pub mod comments;
+pub mod communities;
+pub mod posts;
 pub mod users;
+pub mod votes;

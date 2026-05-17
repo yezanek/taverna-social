@@ -1,0 +1,12 @@
+{% extends "layouts/base.html" %}
+{% block title %}Taverna{% endblock %}
+{% block content %}
+<h1>Home Feed</h1>
+{% if posts %}
+  {% for post in posts %}
+    {% include "partials/post_card.html" %}
+  {% endfor %}
+{% else %}
+  <p>No posts yet.</p>
+{% endif %}
+{% endblock %}

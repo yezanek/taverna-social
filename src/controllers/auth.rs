@@ -8,6 +8,7 @@ use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
 use crate::common::jwt::{create_access_token, create_refresh_token};
+use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::users::{UserError, UserModel};
 use crate::views::helpers;
 
@@ -33,18 +34,20 @@ pub struct LoginForm {
 pub async fn register_form(
     ViewEngine(v): ViewEngine<TeraView>,
     jar: CookieJar,
+    Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
-    let theme = helpers::get_theme(&jar);
     let csrf_token = uuid::Uuid::new_v4().to_string();
     let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
         .http_only(true)
         .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
         .path("/")
         .build();
-    let response = helpers::render(
+    let response = helpers::render_with_theme(
         &v,
         "auth/register.html",
-        json!({"theme": theme, "csrf_token": csrf_token}),
+        json!({"csrf_token": csrf_token}),
+        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
@@ -55,11 +58,10 @@ pub async fn register(
     jar: CookieJar,
     State(ctx): State<AppContext>,
     Extension(taverna): Extension<TavernaConfig>,
+    Extension(theme): Extension<CurrentTheme>,
     headers: axum::http::HeaderMap,
     Form(form): Form<RegisterForm>,
 ) -> Result<Response> {
-    let theme = helpers::get_theme(&jar);
-
     if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Ok(StatusCode::FORBIDDEN.into_response());
     }
@@ -70,11 +72,11 @@ pub async fn register(
             jar,
             "auth/register.html",
             json!({
-                "theme": theme,
                 "error": "Passwords do not match",
                 "username": form.username,
                 "email": form.email,
             }),
+            &theme,
         );
     }
 
@@ -84,11 +86,11 @@ pub async fn register(
             jar,
             "auth/register.html",
             json!({
-                "theme": theme,
                 "error": "Password must be at least 8 characters",
                 "username": form.username,
                 "email": form.email,
             }),
+            &theme,
         );
     }
 
@@ -117,29 +119,34 @@ pub async fn register(
                 jar,
                 "auth/register.html",
                 json!({
-                    "theme": theme,
                     "error": error_msg,
                     "username": form.username,
                     "email": form.email,
                 }),
+                &theme,
             )
         }
     }
 }
 
 #[instrument(skip(v, jar))]
-pub async fn login_form(ViewEngine(v): ViewEngine<TeraView>, jar: CookieJar) -> Result<Response> {
-    let theme = helpers::get_theme(&jar);
+pub async fn login_form(
+    ViewEngine(v): ViewEngine<TeraView>,
+    jar: CookieJar,
+    Extension(theme): Extension<CurrentTheme>,
+) -> Result<Response> {
     let csrf_token = uuid::Uuid::new_v4().to_string();
     let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
         .http_only(true)
         .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
         .path("/")
         .build();
-    let response = helpers::render(
+    let response = helpers::render_with_theme(
         &v,
         "auth/login.html",
-        json!({"theme": theme, "csrf_token": csrf_token}),
+        json!({"csrf_token": csrf_token}),
+        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
@@ -150,11 +157,10 @@ pub async fn login(
     jar: CookieJar,
     State(ctx): State<AppContext>,
     Extension(taverna): Extension<TavernaConfig>,
+    Extension(theme): Extension<CurrentTheme>,
     headers: axum::http::HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Result<Response> {
-    let theme = helpers::get_theme(&jar);
-
     if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Ok(StatusCode::FORBIDDEN.into_response());
     }
@@ -171,9 +177,9 @@ pub async fn login(
                 jar,
                 "auth/login.html",
                 json!({
-                    "theme": theme,
                     "error": "Invalid credentials",
                 }),
+                &theme,
             );
         }
     };
@@ -237,7 +243,7 @@ pub async fn logout(
     Ok((jar.add(access_cookie).add(refresh_cookie), response).into_response())
 }
 
-fn validate_csrf(
+pub(crate) fn validate_csrf(
     jar: &CookieJar,
     form_token: Option<&str>,
     headers: &axum::http::HeaderMap,
@@ -271,16 +277,18 @@ fn render_with_csrf(
     jar: CookieJar,
     template: &str,
     mut ctx: serde_json::Value,
+    theme: &CurrentTheme,
 ) -> Result<Response> {
     let csrf_token = uuid::Uuid::new_v4().to_string();
     let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
         .http_only(true)
         .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
         .path("/")
         .build();
     if let Some(obj) = ctx.as_object_mut() {
         obj.insert("csrf_token".to_string(), serde_json::json!(csrf_token));
     }
-    let response = helpers::render(v, template, ctx)?;
+    let response = helpers::render_with_theme(v, template, ctx, theme)?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }

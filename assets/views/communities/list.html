@@ -1,0 +1,19 @@
+{% extends "layouts/base.html" %}
+{% block title %}Communities - Taverna{% endblock %}
+{% block content %}
+<h1>Communities</h1>
+<div class="community-list">
+{% if communities %}
+{% for community in communities %}
+  <div class="card">
+    <h2><a href="/c/{{ community.slug }}">{{ community.name }}</a></h2>
+    {% if community.description %}
+      <p>{{ community.description }}</p>
+    {% endif %}
+  </div>
+{% endfor %}
+{% else %}
+<p>No communities yet — create one!</p>
+{% endif %}
+</div>
+{% endblock %}

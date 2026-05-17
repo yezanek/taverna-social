@@ -1,0 +1,43 @@
+<div class="card comment" style="margin-left:{{ (comment.depth - 2) * 1.5 }}rem;{% if comment.depth > 8 %}border-left:2px solid var(--border);{% endif %}">
+  <div class="comment-meta" style="color:var(--text-secondary);font-size:0.85rem">
+    <a href="/u/{{ comment.author_username }}" style="color:var(--link)">{{ comment.author_username }}</a>
+  </div>
+  <div class="comment-body" style="margin:0.25rem 0;color:var(--text-primary);font-size:0.95rem">
+    {{ comment.body }}
+  </div>
+  <div class="vote-buttons" id="vote-{{ comment.id }}" style="display:flex;align-items:center;gap:0.25rem;margin-top:0.25rem">
+    <button class="vote-btn upvote"
+      hx-post="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/vote"
+      hx-vals='{"vote":"1","csrf_token":"{{ csrf_token }}"}'
+      hx-target="#vote-{{ comment.id }}"
+      hx-swap="outerHTML"
+      title="Upvote"
+      style="background:none;border:none;color:var(--upvote);cursor:pointer;font-size:1rem;padding:0 0.2rem">
+      ▲
+    </button>
+    <span class="score" style="font-weight:bold;font-size:0.9rem;min-width:1.2rem;text-align:center;color:var(--text-secondary)">
+      {{ comment.score }}
+    </span>
+    <button class="vote-btn downvote"
+      hx-post="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/vote"
+      hx-vals='{"vote":"-1","csrf_token":"{{ csrf_token }}"}'
+      hx-target="#vote-{{ comment.id }}"
+      hx-swap="outerHTML"
+      title="Downvote"
+      style="background:none;border:none;color:var(--downvote);cursor:pointer;font-size:1rem;padding:0 0.2rem">
+      ▼
+    </button>
+  </div>
+  {% if current_user %}
+    <button class="reply-btn" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:0.85rem;padding:0;margin-top:0.25rem"
+      onclick="document.getElementById('reply-form-{{ comment.id }}').style.display='block'">
+      Reply
+    </button>
+    <form id="reply-form-{{ comment.id }}" method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments" style="display:none;margin-top:0.5rem">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="parent_id" value="{{ comment.id }}">
+      <textarea name="body" required style="width:100%;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem"></textarea>
+      <button type="submit" class="btn" style="margin-top:0.25rem">Reply</button>
+    </form>
+  {% endif %}
+</div>
