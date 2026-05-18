@@ -258,7 +258,7 @@ pub(crate) fn validate_csrf(
         if let Some(ref origin_url) = origin
             && (origin_url.scheme() != base.scheme()
                 || origin_url.host() != base.host()
-                || origin_url.port() != base.port())
+                || origin_url.port_or_known_default() != base.port_or_known_default())
         {
             return false;
         }

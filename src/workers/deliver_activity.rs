@@ -61,7 +61,9 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
         };
 
         // Build DomainConfig using env vars
-        let domain = std::env::var("DOMAIN").unwrap_or_else(|_| "localhost:3000".to_string());
+        let domain = std::env::var("TAVERNA_DOMAIN")
+            .or_else(|_| std::env::var("DOMAIN"))
+            .unwrap_or_else(|_| "localhost:3000".to_string());
 
         let federation_config = activitypub_federation::config::FederationConfig::builder()
             .domain(&domain)
@@ -95,7 +97,14 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
                         continue;
                     }
                 };
-            let actor = DbUser::new(temp_user);
+            let actor = match DbUser::new(temp_user) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!("Failed to create DbUser for {}: {}", row.actor_ap_id, e);
+                    any_failed = true;
+                    continue;
+                }
+            };
 
             let tasks = activitypub_federation::activity_sending::SendActivityTask::prepare(
                 &send_activity,
@@ -284,7 +293,7 @@ pub async fn get_follower_inboxes_for_community(
     db: &DatabaseConnection,
     community_id: uuid::Uuid,
 ) -> Result<Vec<String>> {
-    use crate::models::_entities::{communities, follows, users};
+    use crate::models::_entities::{follows, users};
     use sea_orm::QueryFilter;
 
     let follow_relations = follows::Entity::find()
@@ -301,12 +310,6 @@ pub async fn get_follower_inboxes_for_community(
         {
             inboxes.push(u.inbox_url.clone());
         }
-    }
-
-    if !follow_relations.is_empty()
-        && let Ok(Some(c)) = communities::Entity::find_by_id(community_id).one(db).await
-    {
-        inboxes.push(c.followers_url.clone());
     }
 
     inboxes.sort();

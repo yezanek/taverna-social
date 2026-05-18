@@ -1,10 +1,11 @@
-use crate::models::_entities::{comments, votes};
+use crate::models::_entities::{comments, communities, posts, votes};
 use sea_orm::sea_query::Value;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QueryResult, Set, Statement,
+    PaginatorTrait, QueryFilter, QueryOrder, QueryResult, Set, Statement, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -54,6 +55,8 @@ pub enum CommentError {
     Validation(String),
     #[error("Not found")]
     NotFound,
+    #[error("Post is locked")]
+    PostLocked,
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
     #[error(transparent)]
@@ -86,6 +89,14 @@ impl CommentModel {
             ));
         }
 
+        let post = posts::Entity::find_by_id(post_id)
+            .one(db)
+            .await?
+            .ok_or(CommentError::NotFound)?;
+        if post.is_locked {
+            return Err(CommentError::PostLocked);
+        }
+
         let id = Uuid::new_v4();
         let base = base_url.trim_end_matches('/');
         let ap_id = format!("{}/comments/{}", base, id);
@@ -106,6 +117,8 @@ impl CommentModel {
         };
 
         let now = chrono::Utc::now();
+        let txn = db.begin().await?;
+
         let stmt = Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"INSERT INTO comments (id, ap_id, post_id, author_id, parent_id, path, body, score, is_deleted, is_removed, published_at, created_at, updated_at)
@@ -127,14 +140,21 @@ impl CommentModel {
             ],
         );
 
-        db.execute(stmt).await?;
+        txn.execute(stmt).await?;
 
-        let update_stmt = Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r#"UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1"#,
-            vec![Value::Uuid(Some(Box::new(post_id)))],
-        );
-        db.execute(update_stmt).await?;
+        let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
+            .one(&txn)
+            .await?
+            .ok_or(CommentError::NotFound)?
+            .into();
+        let current = post
+            .comment_count
+            .take()
+            .ok_or_else(|| sea_orm::DbErr::Custom("Comment count is missing".to_string()))?;
+        post.comment_count = Set(current + 1);
+        post.update(&txn).await?;
+
+        txn.commit().await?;
 
         let result = Self::raw_find_by_id(db, id)
             .await?
@@ -232,29 +252,44 @@ impl CommentModel {
             .fetch_page(page)
             .await?;
 
-        let mut results = Vec::new();
-        for c in models {
-            let post = crate::models::_entities::posts::Entity::find_by_id(c.post_id)
-                .one(db)
-                .await?;
-            let slug = if let Some(ref p) = post {
-                if let Some(cid) = p.community_id {
-                    crate::models::_entities::communities::Entity::find_by_id(cid)
-                        .one(db)
-                        .await?
-                        .map(|comm| comm.slug)
-                } else {
-                    None
+        let post_ids: Vec<Uuid> = models.iter().map(|c| c.post_id).collect();
+        let posts_map: HashMap<Uuid, posts::Model> = posts::Entity::find()
+            .filter(posts::Column::Id.is_in(post_ids.clone()))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|p| (p.id, p))
+            .collect();
+
+        let community_ids: Vec<Uuid> = posts_map.values().filter_map(|p| p.community_id).collect();
+        let communities_map: HashMap<Uuid, communities::Model> = if community_ids.is_empty() {
+            HashMap::new()
+        } else {
+            communities::Entity::find()
+                .filter(communities::Column::Id.is_in(community_ids))
+                .all(db)
+                .await?
+                .into_iter()
+                .map(|c| (c.id, c))
+                .collect()
+        };
+
+        let results: Vec<CommentWithPost> = models
+            .into_iter()
+            .map(|c| {
+                let post = posts_map.get(&c.post_id);
+                let slug = post
+                    .and_then(|p| p.community_id)
+                    .and_then(|cid| communities_map.get(&cid))
+                    .map(|comm| comm.slug.clone());
+                CommentWithPost {
+                    comment: c,
+                    post_title: post.map(|p| p.title.clone()).unwrap_or_default(),
+                    post_community_slug: slug,
                 }
-            } else {
-                None
-            };
-            results.push(CommentWithPost {
-                comment: c,
-                post_title: post.as_ref().map(|p| p.title.clone()).unwrap_or_default(),
-                post_community_slug: slug,
-            });
-        }
+            })
+            .collect();
+
         Ok((results, num_pages))
     }
 

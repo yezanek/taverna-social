@@ -86,6 +86,14 @@ pub async fn ban_user(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
+    if user.id == current_user.id {
+        return Err(Error::BadRequest("Cannot ban yourself".to_string()));
+    }
+
+    if user.is_admin {
+        return Err(Error::BadRequest("Cannot ban another admin".to_string()));
+    }
+
     UserModel::set_banned(&ctx.db, user.id, true)
         .await
         .map_err(|_| Error::InternalServerError)?;

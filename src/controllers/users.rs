@@ -47,13 +47,15 @@ pub struct PasswordForm {
     pub csrf_token: Option<String>,
 }
 
-#[instrument(skip(v, ctx, current_user, jar))]
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(v, ctx, current_user, jar, taverna, theme, render_mode))]
 pub async fn profile(
     ViewEngine(v): ViewEngine<TeraView>,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
     Extension(taverna): Extension<TavernaConfig>,
+    Extension(theme): Extension<CurrentTheme>,
     Extension(render_mode): Extension<RenderMode>,
     Path(username): Path<String>,
 ) -> Result<Response> {
@@ -71,6 +73,7 @@ pub async fn profile(
                 ],
                 "id": user.ap_id,
                 "type": "Person",
+                "url": user.ap_id,
                 "preferredUsername": user.username,
                 "name": user.display_name,
                 "summary": user.bio,
@@ -84,6 +87,7 @@ pub async fn profile(
                     "owner": user.ap_id,
                     "publicKeyPem": user.public_key,
                 },
+                "manuallyApprovesFollowers": false,
                 "published": user.created_at.format("%+").to_string(),
             });
             return Ok(axum::Json(actor).into_response());
@@ -91,19 +95,17 @@ pub async fn profile(
         RenderMode::Html => {}
     }
 
-    let theme = CurrentTheme("light".to_string());
-
     let follower_count = FollowEntity::count_followers(&ctx.db, user.id)
         .await
-        .unwrap_or(0);
+        .map_err(|_| Error::InternalServerError)?;
     let following_count = FollowEntity::count_following(&ctx.db, user.id)
         .await
-        .unwrap_or(0);
+        .map_err(|_| Error::InternalServerError)?;
 
     let is_following = if let Some(ref cu) = current_user {
         FollowEntity::find_follow(&ctx.db, cu.id, user.id)
             .await
-            .unwrap_or(None)
+            .map_err(|_| Error::InternalServerError)?
             .is_some()
     } else {
         false
@@ -171,15 +173,15 @@ pub async fn profile_posts(
 
     let follower_count = FollowEntity::count_followers(&ctx.db, user.id)
         .await
-        .unwrap_or(0);
+        .map_err(|_| Error::InternalServerError)?;
     let following_count = FollowEntity::count_following(&ctx.db, user.id)
         .await
-        .unwrap_or(0);
+        .map_err(|_| Error::InternalServerError)?;
 
     let is_following = if let Some(ref cu) = current_user {
         FollowEntity::find_follow(&ctx.db, cu.id, user.id)
             .await
-            .unwrap_or(None)
+            .map_err(|_| Error::InternalServerError)?
             .is_some()
     } else {
         false
@@ -248,15 +250,15 @@ pub async fn profile_comments(
 
     let follower_count = FollowEntity::count_followers(&ctx.db, user.id)
         .await
-        .unwrap_or(0);
+        .map_err(|_| Error::InternalServerError)?;
     let following_count = FollowEntity::count_following(&ctx.db, user.id)
         .await
-        .unwrap_or(0);
+        .map_err(|_| Error::InternalServerError)?;
 
     let is_following = if let Some(ref cu) = current_user {
         FollowEntity::find_follow(&ctx.db, cu.id, user.id)
             .await
-            .unwrap_or(None)
+            .map_err(|_| Error::InternalServerError)?
             .is_some()
     } else {
         false
@@ -350,13 +352,14 @@ pub async fn follow(
             "object": target.ap_id,
         });
         let inboxes = vec![target.inbox_url.clone()];
-        let _ = crate::workers::deliver_activity::enqueue_to_followers(
+        crate::workers::deliver_activity::enqueue_to_followers(
             &ctx.db,
             &follow_activity,
             &current_user.ap_id,
             inboxes,
         )
-        .await;
+        .await
+        .map_err(|e| Error::string(&e.to_string()))?;
     }
 
     let csrf_token = Uuid::new_v4().to_string();
@@ -439,13 +442,14 @@ pub async fn unfollow(
             },
         });
         let inboxes = vec![target.inbox_url.clone()];
-        let _ = crate::workers::deliver_activity::enqueue_to_followers(
+        crate::workers::deliver_activity::enqueue_to_followers(
             &ctx.db,
             &undo_activity,
             &current_user.ap_id,
             inboxes,
         )
-        .await;
+        .await
+        .map_err(|e| Error::string(&e.to_string()))?;
     }
 
     let csrf_token = Uuid::new_v4().to_string();
@@ -554,6 +558,12 @@ pub async fn update_settings(
         }
     }
 
+    // Re-fetch persisted user for federation payload
+    let persisted_user = UserModel::find_by_id(&ctx.db, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
     // Federation: enqueue Update{Person} activity
     if taverna.federation.enabled {
         let ap_context: &[&str] = &[
@@ -563,11 +573,12 @@ pub async fn update_settings(
         let activity_id = format!("{}/activities/{}", current_user.ap_id, Uuid::new_v4());
         let person = serde_json::json!({
             "@context": ap_context,
-            "id": current_user.ap_id,
+            "id": persisted_user.ap_id,
             "type": "Person",
-            "preferredUsername": current_user.username,
-            "name": form.display_name.unwrap_or(current_user.username.clone()),
-            "summary": form.bio.unwrap_or_default(),
+            "preferredUsername": persisted_user.username,
+            "name": persisted_user.display_name,
+            "summary": persisted_user.bio,
+            "icon": persisted_user.avatar_url,
         });
         let update = serde_json::json!({
             "@context": ap_context,
@@ -583,13 +594,14 @@ pub async fn update_settings(
                 .await
                 .unwrap_or_default();
         if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+            crate::workers::deliver_activity::enqueue_to_followers(
                 &ctx.db,
                 &update,
                 &current_user.ap_id,
                 inboxes,
             )
-            .await;
+            .await
+            .map_err(|e| Error::string(&e.to_string()))?;
         }
     }
 

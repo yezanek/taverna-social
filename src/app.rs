@@ -85,6 +85,10 @@ impl Hooks for App {
 
         let post_routes = loco_rs::controller::Routes::new()
             .add("/c/{slug}/posts/{id}", get(posts::detail))
+            .add(
+                "/c/{slug}/posts/{id}/edit",
+                get(posts::edit_form).post(posts::update_post),
+            )
             .add("/c/{slug}/posts/{id}/vote", post(posts::vote))
             .add("/c/{slug}/posts/{id}/delete", post(posts::delete))
             .add("/c/{slug}/posts/{id}/remove", post(posts::remove))
@@ -270,7 +274,10 @@ async fn error_pages_middleware(
         );
     }
 
-    if accept.contains("application/json") || accept.contains("application/activity+json") {
+    if accept.contains("application/json")
+        || accept.contains("application/activity+json")
+        || accept.contains("application/ld+json")
+    {
         return response;
     }
 

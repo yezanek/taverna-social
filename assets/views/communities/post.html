@@ -13,6 +13,9 @@
     Posted by <a href="/u/{{ author.username }}" style="color:var(--link)">{{ author.username }}</a>
     | {{ post.comment_count }} comments
     | {{ post.published_at }}
+    {% if current_user and current_user.id == post.author_id %}
+    | <a href="/c/{{ slug }}/posts/{{ post.id }}/edit" style="color:var(--link)">Edit</a>
+    {% endif %}
   </div>
   {% include "partials/vote_buttons.html" %}
 </div>

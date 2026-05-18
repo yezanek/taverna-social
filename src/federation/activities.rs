@@ -8,7 +8,7 @@ use tracing::instrument;
 use url::Url;
 
 use crate::federation::protocol::*;
-use crate::models::_entities::{communities, follows, posts, users};
+use crate::models::_entities::{communities, federation_objects, follows, posts, users};
 
 /// Wrapper for outbound activity JSON that implements Activity + Serialize.
 /// This allows us to send pre-built JSON activities through the crate's
@@ -61,6 +61,7 @@ impl Activity for TavernaActivity {
             TavernaActivity::UpdateActivity(a) => &a.id,
             TavernaActivity::DeleteActivity(a) => &a.id,
             TavernaActivity::FollowActivity(a) => &a.id,
+            TavernaActivity::AcceptFollowActivity(a) => &a.id,
             TavernaActivity::LikeActivity(a) => &a.id,
             TavernaActivity::DislikeActivity(a) => &a.id,
             TavernaActivity::AnnounceActivity(a) => &a.id,
@@ -76,6 +77,7 @@ impl Activity for TavernaActivity {
             TavernaActivity::UpdateActivity(a) => &a.actor,
             TavernaActivity::DeleteActivity(a) => &a.actor,
             TavernaActivity::FollowActivity(a) => &a.actor,
+            TavernaActivity::AcceptFollowActivity(a) => &a.actor,
             TavernaActivity::LikeActivity(a) => &a.actor,
             TavernaActivity::DislikeActivity(a) => &a.actor,
             TavernaActivity::AnnounceActivity(a) => &a.actor,
@@ -97,6 +99,28 @@ impl Activity for TavernaActivity {
     #[instrument(skip(self, data))]
     async fn receive(self, data: &Data<Self::DataType>) -> Result<(), Self::Error> {
         let db = data.app_data();
+        let activity_id = self.id().as_str();
+        let now: chrono::DateTime<chrono::FixedOffset> = chrono::Utc::now().into();
+        let obj = federation_objects::ActiveModel {
+            id: Set(uuid::Uuid::new_v4()),
+            ap_id: Set(activity_id.to_string()),
+            object_type: Set("Activity".to_string()),
+            object_json: Set(serde_json::Value::Null),
+            fetched_at: Set(now),
+            created_at: Set(now),
+            updated_at: Set(now),
+        };
+        match obj.insert(db).await {
+            Ok(_) => {}
+            Err(sea_orm::DbErr::Exec(ref e)) if e.to_string().contains("duplicate key") => {
+                tracing::debug!(activity_id, "skipping already-processed activity");
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, activity_id, "idempotency check failed, proceeding");
+            }
+        }
+
         match self {
             TavernaActivity::CreateActivity(a) => handle_create(data, a).await,
             TavernaActivity::UpdateActivity(a) => handle_update(db, a).await,
@@ -104,6 +128,7 @@ impl Activity for TavernaActivity {
             TavernaActivity::FollowActivity(a) => handle_follow(db, a).await,
             TavernaActivity::LikeActivity(a) => handle_like(db, a).await,
             TavernaActivity::DislikeActivity(a) => handle_dislike(db, a).await,
+            TavernaActivity::AcceptFollowActivity(a) => handle_accept_follow(db, a).await,
             TavernaActivity::AnnounceActivity(a) => {
                 tracing::info!("Received Announce activity: {}", a.id);
                 Ok(())
@@ -167,15 +192,16 @@ async fn handle_create(
                     .await
                     .unwrap_or_default();
 
-            if !inboxes.is_empty() {
-                crate::workers::deliver_activity::enqueue_to_followers(
+            if !inboxes.is_empty()
+                && let Err(e) = crate::workers::deliver_activity::enqueue_to_followers(
                     db,
                     &announce_activity,
                     &community.ap_id,
                     inboxes,
                 )
                 .await
-                .ok();
+            {
+                tracing::warn!(community_id = %cid, error = %e, "failed to enqueue announce to followers");
             }
         }
     }
@@ -303,6 +329,23 @@ async fn handle_follow(db: &DatabaseConnection, activity: Follow) -> Result<(), 
     Ok(())
 }
 
+async fn handle_accept_follow(
+    db: &DatabaseConnection,
+    activity: AcceptFollow,
+) -> Result<(), anyhow::Error> {
+    let follow_id = activity.object.id.as_str();
+    follows::Entity::update_many()
+        .filter(follows::Column::ApId.eq(follow_id))
+        .col_expr(
+            follows::Column::Accepted,
+            sea_orm::sea_query::Expr::value(true),
+        )
+        .exec(db)
+        .await?;
+    tracing::info!("Accepted follow: {}", follow_id);
+    Ok(())
+}
+
 async fn send_accept_follow(
     db: &DatabaseConnection,
     follow_activity: &Follow,
@@ -356,9 +399,10 @@ async fn handle_like(db: &DatabaseConnection, activity: Like) -> Result<(), anyh
         .filter(posts::Column::ApId.eq(object_str))
         .one(db)
         .await?
+        && let Err(e) =
+            crate::models::votes::VoteModel::cast_vote(db, actor.id, Some(post.id), None, 1).await
     {
-        let _ =
-            crate::models::votes::VoteModel::cast_vote(db, actor.id, Some(post.id), None, 1).await;
+        tracing::warn!(actor_id = %actor.id, post_id = %post.id, error = %e, "failed to record like");
     }
 
     Ok(())
@@ -374,9 +418,10 @@ async fn handle_dislike(db: &DatabaseConnection, activity: Dislike) -> Result<()
         .filter(posts::Column::ApId.eq(object_str))
         .one(db)
         .await?
+        && let Err(e) =
+            crate::models::votes::VoteModel::cast_vote(db, actor.id, Some(post.id), None, -1).await
     {
-        let _ =
-            crate::models::votes::VoteModel::cast_vote(db, actor.id, Some(post.id), None, -1).await;
+        tracing::warn!(actor_id = %actor.id, post_id = %post.id, error = %e, "failed to record dislike");
     }
 
     Ok(())
@@ -386,10 +431,10 @@ async fn handle_undo_follow(
     db: &DatabaseConnection,
     activity: UndoFollow,
 ) -> Result<(), anyhow::Error> {
-    let object_ap_id = activity.object.object.as_str();
+    let follow_ap_id = activity.object.id.as_str();
 
     follows::Entity::delete_many()
-        .filter(follows::Column::ApId.eq(object_ap_id))
+        .filter(follows::Column::ApId.eq(follow_ap_id))
         .exec(db)
         .await?;
 
@@ -409,9 +454,10 @@ async fn handle_undo_like(
         .filter(posts::Column::ApId.eq(object_str))
         .one(db)
         .await?
+        && let Err(e) =
+            crate::models::votes::VoteModel::delete_vote(db, actor.id, Some(post.id), None).await
     {
-        let _ =
-            crate::models::votes::VoteModel::cast_vote(db, actor.id, Some(post.id), None, 1).await;
+        tracing::warn!(actor_id = %actor.id, post_id = %post.id, error = %e, "failed to delete like");
     }
 
     Ok(())
@@ -430,9 +476,10 @@ async fn handle_undo_dislike(
         .filter(posts::Column::ApId.eq(object_str))
         .one(db)
         .await?
+        && let Err(e) =
+            crate::models::votes::VoteModel::delete_vote(db, actor.id, Some(post.id), None).await
     {
-        let _ =
-            crate::models::votes::VoteModel::cast_vote(db, actor.id, Some(post.id), None, -1).await;
+        tracing::warn!(actor_id = %actor.id, post_id = %post.id, error = %e, "failed to delete dislike");
     }
 
     Ok(())

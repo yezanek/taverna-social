@@ -112,6 +112,9 @@ pub async fn feed(
                     "publicKeyPem": community.public_key,
                 },
                 "published": community.created_at.format("%+").to_string(),
+                "attributedTo": community.ap_id,
+                "postingRestrictedToMods": community.posting_restricted,
+                "sensitive": community.is_nsfw,
             });
             return Ok(axum::Json(actor).into_response());
         }
@@ -225,10 +228,10 @@ pub async fn create_post(
         return Err(Error::Unauthorized("You must join to post".to_string()));
     }
 
-    let banned = CommunityBansEntity::is_banned(&ctx.db, community.id, current_user.id)
+    if CommunityBansEntity::is_banned(&ctx.db, community.id, current_user.id)
         .await
-        .unwrap_or(false);
-    if banned {
+        .map_err(|_| Error::InternalServerError)?
+    {
         return Err(Error::Unauthorized(
             "You are banned from this community".to_string(),
         ));

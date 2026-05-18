@@ -1,3 +1,4 @@
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -15,7 +16,7 @@ pub struct FederationSettings {
 }
 
 impl TavernaConfig {
-    pub fn from_env() -> Result<Self, String> {
+    pub fn from_env() -> Result<Self> {
         let base_url =
             std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
         let domain = std::env::var("TAVERNA_DOMAIN")
@@ -26,7 +27,7 @@ impl TavernaConfig {
                 "true" => true,
                 "false" => false,
                 other => {
-                    return Err(format!(
+                    return Err(anyhow!(
                         "Invalid FEDERATION_ENABLED value '{}': expected 'true' or 'false'",
                         other
                     ));
@@ -47,7 +48,7 @@ impl TavernaConfig {
         let http_signature_expiry_seconds = match std::env::var("HTTP_SIGNATURE_EXPIRY_SECONDS") {
             Ok(val) => val
                 .parse::<u32>()
-                .map_err(|e| format!("Invalid HTTP_SIGNATURE_EXPIRY_SECONDS '{}': {}", val, e))?,
+                .map_err(|e| anyhow!("Invalid HTTP_SIGNATURE_EXPIRY_SECONDS '{}': {}", val, e))?,
             Err(_) => 30,
         };
 

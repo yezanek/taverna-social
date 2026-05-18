@@ -355,7 +355,7 @@ mod tests {
         let db = &boot.app_context.db;
 
         let user = create_test_user(db).await;
-        let db_user = DbUser::new(user);
+        let db_user = DbUser::new(user).unwrap();
         let data = make_fed_data(db).await;
 
         let person: Person = db_user.into_json(&data).await.unwrap();
@@ -374,7 +374,7 @@ mod tests {
         let db = &boot.app_context.db;
 
         let user = create_test_user(db).await;
-        let db_user = DbUser::new(user);
+        let db_user = DbUser::new(user).unwrap();
         let data = make_fed_data(db).await;
 
         let person: Person = db_user.into_json(&data).await.unwrap();

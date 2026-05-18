@@ -1,7 +1,7 @@
 use axum::{Extension, extract::Path, response::IntoResponse};
 use futures::future::join_all;
 use loco_rs::prelude::*;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde_json::json;
 use tracing::instrument;
 
@@ -30,6 +30,7 @@ pub async fn user_actor(
                 ],
                 "id": user.ap_id,
                 "type": "Person",
+                "url": user.ap_id,
                 "preferredUsername": user.username,
                 "name": user.display_name,
                 "summary": user.bio,
@@ -43,6 +44,7 @@ pub async fn user_actor(
                     "owner": user.ap_id,
                     "publicKeyPem": user.public_key,
                 },
+                "manuallyApprovesFollowers": false,
                 "published": user.created_at.format("%+").to_string(),
             });
             Ok(axum::Json(actor).into_response())
@@ -67,6 +69,7 @@ pub async fn user_followers(
 
     let follows = follows::Entity::find()
         .filter(follows::Column::FollowingId.eq(user.id))
+        .filter(follows::Column::Accepted.eq(true))
         .all(&ctx.db)
         .await
         .map_err(|_| Error::InternalServerError)?;
@@ -83,7 +86,7 @@ pub async fn user_followers(
         .collect();
 
     let collection = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
         "id": format!("{}/followers", user.ap_id),
         "type": "OrderedCollection",
         "totalItems": follower_ids.len(),
@@ -127,7 +130,7 @@ pub async fn user_following(
         .collect();
 
     let collection = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
         "id": format!("{}/following", user.ap_id),
         "type": "OrderedCollection",
         "totalItems": following_ids.len(),
@@ -149,17 +152,15 @@ pub async fn user_outbox(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
-    let recent_posts: Vec<posts::Model> = posts::Entity::find()
+    let items: Vec<serde_json::Value> = posts::Entity::find()
         .filter(posts::Column::AuthorId.eq(user.id))
         .filter(posts::Column::IsDeleted.eq(false))
         .order_by_desc(posts::Column::PublishedAt)
+        .limit(20)
         .all(&ctx.db)
         .await
-        .map_err(|_| Error::InternalServerError)?;
-
-    let items: Vec<serde_json::Value> = recent_posts
+        .map_err(|_| Error::InternalServerError)?
         .into_iter()
-        .take(20)
         .map(|p| {
             json!({
                 "id": format!("{}/activity/create/{}", user.ap_id, p.id),
@@ -178,7 +179,7 @@ pub async fn user_outbox(
         .collect();
 
     let collection = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
         "id": format!("{}/outbox", user.ap_id),
         "type": "OrderedCollection",
         "totalItems": items.len(),
@@ -219,7 +220,7 @@ pub async fn community_followers(
         .collect();
 
     let collection = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
         "id": format!("{}/followers", community.ap_id),
         "type": "OrderedCollection",
         "totalItems": follower_ids.len(),
@@ -241,17 +242,15 @@ pub async fn community_outbox(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
-    let recent_posts: Vec<posts::Model> = posts::Entity::find()
+    let items: Vec<serde_json::Value> = posts::Entity::find()
         .filter(posts::Column::CommunityId.eq(Some(community.id)))
         .filter(posts::Column::IsDeleted.eq(false))
         .order_by_desc(posts::Column::PublishedAt)
+        .limit(20)
         .all(&ctx.db)
         .await
-        .map_err(|_| Error::InternalServerError)?;
-
-    let items: Vec<serde_json::Value> = recent_posts
+        .map_err(|_| Error::InternalServerError)?
         .into_iter()
-        .take(20)
         .map(|p| {
             json!({
                 "id": format!("{}/activity/announce/{}", community.ap_id, p.id),
@@ -270,7 +269,7 @@ pub async fn community_outbox(
         .collect();
 
     let collection = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
         "id": format!("{}/outbox", community.ap_id),
         "type": "OrderedCollection",
         "totalItems": items.len(),

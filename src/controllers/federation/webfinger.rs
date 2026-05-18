@@ -24,36 +24,48 @@ pub async fn webfinger(
     data: Data<DatabaseConnection>,
     Query(query): Query<WebFingerQuery>,
 ) -> Result<Response> {
-    tracing::warn!(target: "webfinger", "extract_webfinger_name called with: resource={}, domain={:?}", query.resource, data.domain());
+    tracing::debug!(target: "webfinger", domain = %data.domain(), "webfinger request");
     let username_or_slug = extract_webfinger_name(&query.resource, &data)
         .map_err(|e| Error::BadRequest(format!("Invalid webfinger query: {}", e)))?;
-    tracing::warn!(target: "webfinger", "extract_webfinger_name succeeded: {}", username_or_slug);
+    tracing::debug!(target: "webfinger", "name extracted");
 
-    if let Ok(Some(user)) = users::Entity::find()
+    match users::Entity::find()
         .filter(users::Column::Username.eq(username_or_slug.to_lowercase()))
         .one(&ctx.db)
         .await
     {
-        let url: Url = user.ap_id.parse().map_err(|_| Error::InternalServerError)?;
-        let wf =
-            build_webfinger_response_with_type(query.resource.clone(), vec![(url, Some("Person"))]);
-        let json = serde_json::to_string(&wf).map_err(|_| Error::InternalServerError)?;
-        return Ok(([(CONTENT_TYPE, WEBFINGER_CONTENT_TYPE)], json).into_response());
+        Ok(Some(user)) => {
+            let url: Url = user.ap_id.parse().map_err(|_| Error::InternalServerError)?;
+            let wf = build_webfinger_response_with_type(
+                query.resource.clone(),
+                vec![(url, Some("Person"))],
+            );
+            let json = serde_json::to_string(&wf).map_err(|_| Error::InternalServerError)?;
+            return Ok(([(CONTENT_TYPE, WEBFINGER_CONTENT_TYPE)], json).into_response());
+        }
+        Ok(None) => {}
+        Err(_) => return Err(Error::InternalServerError),
     }
 
-    if let Ok(Some(community)) = communities::Entity::find()
+    match communities::Entity::find()
         .filter(communities::Column::Slug.eq(username_or_slug.to_lowercase()))
         .one(&ctx.db)
         .await
     {
-        let url: Url = community
-            .ap_id
-            .parse()
-            .map_err(|_| Error::InternalServerError)?;
-        let wf =
-            build_webfinger_response_with_type(query.resource.clone(), vec![(url, Some("Group"))]);
-        let json = serde_json::to_string(&wf).map_err(|_| Error::InternalServerError)?;
-        return Ok(([(CONTENT_TYPE, WEBFINGER_CONTENT_TYPE)], json).into_response());
+        Ok(Some(community)) => {
+            let url: Url = community
+                .ap_id
+                .parse()
+                .map_err(|_| Error::InternalServerError)?;
+            let wf = build_webfinger_response_with_type(
+                query.resource.clone(),
+                vec![(url, Some("Group"))],
+            );
+            let json = serde_json::to_string(&wf).map_err(|_| Error::InternalServerError)?;
+            return Ok(([(CONTENT_TYPE, WEBFINGER_CONTENT_TYPE)], json).into_response());
+        }
+        Ok(None) => {}
+        Err(_) => return Err(Error::InternalServerError),
     }
 
     Err(Error::NotFound)

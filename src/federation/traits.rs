@@ -14,9 +14,9 @@ use sea_orm::Set;
 pub struct DbUser(pub users::Model, pub Url);
 
 impl DbUser {
-    pub fn new(model: users::Model) -> Self {
-        let url = model.ap_id.parse().expect("Invalid ap_id URL");
-        DbUser(model, url)
+    pub fn new(model: users::Model) -> Result<Self, url::ParseError> {
+        let url = model.ap_id.parse()?;
+        Ok(DbUser(model, url))
     }
 }
 
@@ -39,13 +39,18 @@ impl Object for DbUser {
             .filter(users::Column::ApId.eq(object_id.as_str()))
             .one(db)
             .await?;
-        Ok(user.map(DbUser::new))
+        match user {
+            Some(u) => Ok(Some(DbUser::new(u)?)),
+            None => Ok(None),
+        }
     }
 
     async fn into_json(self, _data: &Data<Self::DataType>) -> Result<Self::Kind, Self::Error> {
+        let id_url = self.1.clone();
         Ok(Person {
             kind: crate::federation::protocol::PersonKind::Person,
-            id: self.1.clone(),
+            id: id_url.clone(),
+            url: Some(id_url.clone()),
             preferred_username: Some(self.0.username),
             name: self.0.display_name.clone(),
             summary: self.0.bio.clone(),
@@ -59,6 +64,7 @@ impl Object for DbUser {
                 "owner": self.0.ap_id,
                 "publicKeyPem": self.0.public_key,
             })),
+            manually_approves_followers: Some(false),
             published: Some(self.0.created_at.format("%+").to_string()),
         })
     }
@@ -82,20 +88,31 @@ impl Object for DbUser {
             .one(db)
             .await?
         {
-            return Ok(DbUser::new(existing));
+            return Ok(DbUser::new(existing)?);
         }
 
         // Create remote user
         let uuid = uuid::Uuid::new_v4();
         let inbox_url = json.inbox.as_str().to_string();
         let ap_id = id.to_string();
-        let public_key = json
+        let public_key_raw = json
             .public_key
             .as_ref()
             .and_then(|pk| pk.get("publicKeyPem"))
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Missing or empty publicKeyPem for remote user {}", id)
+            })?;
+
+        if !public_key_raw.starts_with("-----BEGIN") {
+            anyhow::bail!(
+                "Invalid PEM format for remote user {}: does not start with -----BEGIN",
+                id
+            );
+        }
+
+        let public_key = public_key_raw.to_string();
 
         let new_user = users::ActiveModel {
             id: Set(uuid),
@@ -124,7 +141,7 @@ impl Object for DbUser {
         };
 
         let saved = new_user.insert(db).await?;
-        Ok(DbUser::new(saved))
+        Ok(DbUser::new(saved)?)
     }
 }
 
@@ -139,7 +156,10 @@ impl Actor for DbUser {
     }
 
     fn inbox(&self) -> Url {
-        self.0.inbox_url.parse().expect("Invalid inbox URL")
+        self.0.inbox_url.parse().unwrap_or_else(|e| {
+            tracing::warn!("Invalid inbox URL for {}: {}", self.0.ap_id, e);
+            Url::parse("https://localhost/inbox").expect("inbox fallback URL")
+        })
     }
 
     fn shared_inbox(&self) -> Option<Url> {
@@ -157,9 +177,9 @@ impl Actor for DbUser {
 pub struct DbCommunity(pub communities::Model, pub Url);
 
 impl DbCommunity {
-    pub fn new(model: communities::Model) -> Self {
-        let url = model.ap_id.parse().expect("Invalid ap_id URL");
-        DbCommunity(model, url)
+    pub fn new(model: communities::Model) -> Result<Self, url::ParseError> {
+        let url = model.ap_id.parse()?;
+        Ok(DbCommunity(model, url))
     }
 }
 
@@ -182,13 +202,17 @@ impl Object for DbCommunity {
             .filter(communities::Column::ApId.eq(object_id.as_str()))
             .one(db)
             .await?;
-        Ok(community.map(DbCommunity::new))
+        match community {
+            Some(c) => Ok(Some(DbCommunity::new(c)?)),
+            None => Ok(None),
+        }
     }
 
     async fn into_json(self, _data: &Data<Self::DataType>) -> Result<Self::Kind, Self::Error> {
+        let id_url = self.1.clone();
         Ok(Group {
             kind: crate::federation::protocol::GroupKind::Group,
-            id: self.1.clone(),
+            id: id_url.clone(),
             preferred_username: Some(self.0.slug),
             name: Some(self.0.name),
             summary: self.0.description.clone(),
@@ -201,6 +225,9 @@ impl Object for DbCommunity {
                 "publicKeyPem": self.0.public_key,
             })),
             published: Some(self.0.created_at.format("%+").to_string()),
+            attributed_to: Some(id_url),
+            posting_restricted_to_mods: Some(self.0.posting_restricted),
+            sensitive: Some(self.0.is_nsfw),
         })
     }
 
@@ -222,19 +249,30 @@ impl Object for DbCommunity {
             .one(db)
             .await?
         {
-            return Ok(DbCommunity::new(existing));
+            return Ok(DbCommunity::new(existing)?);
         }
 
         let uuid = uuid::Uuid::new_v4();
         let inbox_url = json.inbox.as_str().to_string();
         let ap_id = id.to_string();
-        let public_key = json
+        let public_key_raw = json
             .public_key
             .as_ref()
             .and_then(|pk| pk.get("publicKeyPem"))
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Missing or empty publicKeyPem for remote community {}", id)
+            })?;
+
+        if !public_key_raw.starts_with("-----BEGIN") {
+            anyhow::bail!(
+                "Invalid PEM format for remote community {}: does not start with -----BEGIN",
+                id
+            );
+        }
+
+        let public_key = public_key_raw.to_string();
 
         // Communities from remote don't have a user-defined slug; derive one from AP ID
         let slug = format!("remote_{}", &uuid.to_string()[..8]);
@@ -264,7 +302,7 @@ impl Object for DbCommunity {
         };
 
         let saved = new_community.insert(db).await?;
-        Ok(DbCommunity::new(saved))
+        Ok(DbCommunity::new(saved)?)
     }
 }
 
@@ -279,7 +317,10 @@ impl Actor for DbCommunity {
     }
 
     fn inbox(&self) -> Url {
-        self.0.inbox_url.parse().expect("Invalid inbox URL")
+        self.0.inbox_url.parse().unwrap_or_else(|e| {
+            tracing::warn!("Invalid inbox URL for {}: {}", self.0.ap_id, e);
+            Url::parse("https://localhost/inbox").expect("inbox fallback URL")
+        })
     }
 
     fn shared_inbox(&self) -> Option<Url> {
@@ -293,9 +334,9 @@ impl Actor for DbCommunity {
 pub struct DbPost(pub posts::Model, pub Url);
 
 impl DbPost {
-    pub fn new(model: posts::Model) -> Self {
-        let url = model.ap_id.parse().expect("Invalid ap_id URL");
-        DbPost(model, url)
+    pub fn new(model: posts::Model) -> Result<Self, url::ParseError> {
+        let url = model.ap_id.parse()?;
+        Ok(DbPost(model, url))
     }
 }
 
@@ -318,7 +359,10 @@ impl Object for DbPost {
             .filter(posts::Column::ApId.eq(object_id.as_str()))
             .one(db)
             .await?;
-        Ok(post.map(DbPost::new))
+        match post {
+            Some(p) => Ok(Some(DbPost::new(p)?)),
+            None => Ok(None),
+        }
     }
 
     async fn into_json(self, data: &Data<Self::DataType>) -> Result<Self::Kind, Self::Error> {
@@ -361,7 +405,7 @@ impl Object for DbPost {
             .one(db)
             .await?
         {
-            return Ok(DbPost::new(existing));
+            return Ok(DbPost::new(existing)?);
         }
 
         let community_id = {
@@ -409,7 +453,7 @@ impl Object for DbPost {
         };
 
         let saved = new_post.insert(db).await?;
-        Ok(DbPost::new(saved))
+        Ok(DbPost::new(saved)?)
     }
 }
 
@@ -419,9 +463,9 @@ impl Object for DbPost {
 pub struct DbComment(pub comments::Model, pub Url);
 
 impl DbComment {
-    pub fn new(model: comments::Model) -> Self {
-        let url = model.ap_id.parse().expect("Invalid ap_id URL");
-        DbComment(model, url)
+    pub fn new(model: comments::Model) -> Result<Self, url::ParseError> {
+        let url = model.ap_id.parse()?;
+        Ok(DbComment(model, url))
     }
 }
 
@@ -444,7 +488,10 @@ impl Object for DbComment {
             .filter(comments::Column::ApId.eq(object_id.as_str()))
             .one(db)
             .await?;
-        Ok(comment.map(DbComment::new))
+        match comment {
+            Some(c) => Ok(Some(DbComment::new(c)?)),
+            None => Ok(None),
+        }
     }
 
     async fn into_json(self, data: &Data<Self::DataType>) -> Result<Self::Kind, Self::Error> {
@@ -491,7 +538,7 @@ impl Object for DbComment {
             .one(db)
             .await?
         {
-            return Ok(DbComment::new(existing));
+            return Ok(DbComment::new(existing)?);
         }
 
         let in_reply_to = json
@@ -533,6 +580,6 @@ impl Object for DbComment {
 
         let saved = new_comment.insert(db).await?;
         crate::models::posts::PostModel::increment_comment_count(db, parent_post.id).await?;
-        Ok(DbComment::new(saved))
+        Ok(DbComment::new(saved)?)
     }
 }

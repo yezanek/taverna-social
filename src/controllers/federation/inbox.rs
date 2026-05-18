@@ -7,6 +7,24 @@ use tracing::instrument;
 use crate::federation::protocol::TavernaActivity;
 use crate::federation::traits::{DbCommunity, DbUser};
 
+fn map_inbox_error(e: anyhow::Error) -> Error {
+    let msg = format!("{:#}", e);
+    let lower = msg.to_lowercase();
+    if lower.contains("missing field")
+        || lower.contains("invalid type")
+        || lower.contains("unknown field")
+        || lower.contains("trailing characters")
+        || lower.contains("invalid value")
+        || lower.contains("domains do not match")
+    {
+        tracing::warn!("Bad request activity: {}", msg);
+        Error::BadRequest("Invalid activity".to_string())
+    } else {
+        tracing::error!("Internal error processing activity: {}", msg);
+        Error::InternalServerError
+    }
+}
+
 #[instrument(skip(_ctx, activity_data, data))]
 pub async fn user_inbox(
     State(_ctx): State<AppContext>,
@@ -15,10 +33,7 @@ pub async fn user_inbox(
 ) -> Result<Response> {
     receive_activity::<TavernaActivity, DbUser, DatabaseConnection>(activity_data, &data)
         .await
-        .map_err(|e| {
-            tracing::warn!("Failed to receive activity: {:#}", e);
-            Error::BadRequest("Invalid activity".to_string())
-        })?;
+        .map_err(map_inbox_error)?;
     Ok(axum::Json(serde_json::json!({"status": "ok"})).into_response())
 }
 
@@ -30,9 +45,6 @@ pub async fn community_inbox(
 ) -> Result<Response> {
     receive_activity::<TavernaActivity, DbCommunity, DatabaseConnection>(activity_data, &data)
         .await
-        .map_err(|e| {
-            tracing::warn!("Failed to receive activity: {:#}", e);
-            Error::BadRequest("Invalid activity".to_string())
-        })?;
+        .map_err(map_inbox_error)?;
     Ok(axum::Json(serde_json::json!({"status": "ok"})).into_response())
 }

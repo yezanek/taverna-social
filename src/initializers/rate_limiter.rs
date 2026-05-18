@@ -4,41 +4,51 @@ use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use governor::clock;
-use governor::state::InMemoryState;
-use governor::state::direct::NotKeyed;
-use governor::{Quota, RateLimiter};
+use governor::{DefaultKeyedRateLimiter, Quota};
 use loco_rs::Result;
 use loco_rs::app::{AppContext, Initializer};
 use std::num::NonZeroU32;
 use std::sync::LazyLock;
 
-static INBOX_LIMITER: LazyLock<RateLimiter<NotKeyed, InMemoryState, clock::DefaultClock>> =
-    LazyLock::new(|| {
-        RateLimiter::direct(
-            Quota::per_second(NonZeroU32::new(5).unwrap())
-                .allow_burst(NonZeroU32::new(20).unwrap()),
-        )
-    });
+fn client_key(req: &Request) -> String {
+    req.headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            req.headers()
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "127.0.0.1".to_string())
+}
 
-static AUTH_LIMITER: LazyLock<RateLimiter<NotKeyed, InMemoryState, clock::DefaultClock>> =
-    LazyLock::new(|| {
-        RateLimiter::direct(
-            Quota::per_second(NonZeroU32::new(10).unwrap())
-                .allow_burst(NonZeroU32::new(30).unwrap()),
-        )
-    });
+macro_rules! nzu32 {
+    ($n:literal) => {
+        match NonZeroU32::new($n) {
+            Some(n) => n,
+            None => unreachable!("non-zero literal {}", $n),
+        }
+    };
+}
 
-static DEFAULT_LIMITER: LazyLock<RateLimiter<NotKeyed, InMemoryState, clock::DefaultClock>> =
-    LazyLock::new(|| {
-        RateLimiter::direct(
-            Quota::per_second(NonZeroU32::new(60).unwrap())
-                .allow_burst(NonZeroU32::new(600).unwrap()),
-        )
-    });
+static INBOX_LIMITER: LazyLock<DefaultKeyedRateLimiter<String>> = LazyLock::new(|| {
+    DefaultKeyedRateLimiter::keyed(Quota::per_second(nzu32!(5)).allow_burst(nzu32!(20)))
+});
+
+static AUTH_LIMITER: LazyLock<DefaultKeyedRateLimiter<String>> = LazyLock::new(|| {
+    DefaultKeyedRateLimiter::keyed(Quota::per_second(nzu32!(10)).allow_burst(nzu32!(30)))
+});
+
+static DEFAULT_LIMITER: LazyLock<DefaultKeyedRateLimiter<String>> = LazyLock::new(|| {
+    DefaultKeyedRateLimiter::keyed(Quota::per_second(nzu32!(60)).allow_burst(nzu32!(600)))
+});
 
 async fn rate_limit_middleware(req: Request, next: Next) -> Response {
     let path = req.uri().path();
+    let key = client_key(&req);
 
     let limiter = if path.ends_with("/inbox") {
         &*INBOX_LIMITER
@@ -48,7 +58,7 @@ async fn rate_limit_middleware(req: Request, next: Next) -> Response {
         &*DEFAULT_LIMITER
     };
 
-    if limiter.check().is_ok() {
+    if limiter.check_key(&key).is_ok() {
         next.run(req).await
     } else {
         StatusCode::TOO_MANY_REQUESTS.into_response()

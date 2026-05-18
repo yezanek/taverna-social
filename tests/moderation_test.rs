@@ -3,9 +3,10 @@ mod tests {
     use loco_rs::testing::prelude::*;
     use serial_test::serial;
     use taverna::app::App;
+    use taverna::models::comments::{CommentError, CommentModel};
     use taverna::models::communities::CommunityModel;
     use taverna::models::community_bans::Entity as CommunityBans;
-    use taverna::models::posts::PostModel;
+    use taverna::models::posts::{PostError, PostModel};
     use taverna::models::users::UserModel;
 
     fn setup() {
@@ -104,6 +105,19 @@ mod tests {
             .await
             .unwrap();
         assert!(is_banned);
+
+        let err = PostModel::create(
+            db,
+            Some(community.id),
+            banned_user.id,
+            "Banned post",
+            Some("Body"),
+            None,
+            "http://localhost:5150",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, PostError::Banned));
     }
 
     #[tokio::test]
@@ -150,6 +164,18 @@ mod tests {
 
         let locked_post = PostModel::find_by_id(db, post.id).await.unwrap().unwrap();
         assert!(locked_post.is_locked);
+
+        let err = CommentModel::create(
+            db,
+            post.id,
+            user.id,
+            None,
+            "This should fail",
+            "http://localhost:5150",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, CommentError::PostLocked));
     }
 
     #[tokio::test]

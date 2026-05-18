@@ -52,7 +52,7 @@
       {% for c in comments %}
         <div class="card" style="margin-bottom:0.5rem">
           <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.25rem">
-            Comment on <a href="/c/{{ c.comment.post_id }}/posts/{{ c.comment.post_id }}" style="color:var(--link)">{{ c.post_title }}</a>
+            Comment on <a href="/c/{{ c.post_community_slug | default(value=c.comment.post_id) }}/posts/{{ c.comment.post_id }}" style="color:var(--link)">{{ c.post_title }}</a>
           </div>
           <div>{{ c.comment.body }}</div>
           <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem">{{ c.comment.published_at }}</div>

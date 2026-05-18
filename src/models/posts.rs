@@ -1,4 +1,5 @@
 use crate::models::_entities::{posts, posts::ActiveModel, votes};
+use crate::models::community_bans::Entity as CommunityBans;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, Set,
@@ -13,6 +14,8 @@ pub enum PostError {
     Validation(String),
     #[error("Not found")]
     NotFound,
+    #[error("You are banned from this community")]
+    Banned,
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
     #[error(transparent)]
@@ -54,6 +57,13 @@ impl PostModel {
             return Err(PostError::Validation(
                 "Post must have body or URL".to_string(),
             ));
+        }
+
+        if let Some(cid) = community_id {
+            let banned = CommunityBans::is_banned(db, cid, author_id).await?;
+            if banned {
+                return Err(PostError::Banned);
+            }
         }
 
         let id = Uuid::new_v4();
@@ -232,6 +242,50 @@ impl PostModel {
         active.updated_at = Set(chrono::Utc::now().into());
         active.update(db).await?;
         Ok(new_locked)
+    }
+
+    #[instrument(skip(db))]
+    pub async fn update(
+        db: &DatabaseConnection,
+        post_id: Uuid,
+        title: &str,
+        body: Option<&str>,
+        url: Option<&str>,
+    ) -> Result<posts::Model, PostError> {
+        let title = title.trim();
+        if title.is_empty() || title.len() > 300 {
+            return Err(PostError::Validation(
+                "Title must be 1-300 characters".to_string(),
+            ));
+        }
+        let body_effective = body.map(|s| s.trim()).filter(|s| !s.is_empty());
+        let url_effective = url.map(|s| s.trim()).filter(|s| !s.is_empty());
+        if let Some(u) = &url_effective {
+            let parsed = Url::parse(u)
+                .map_err(|_| PostError::Validation("Invalid URL format".to_string()))?;
+            let scheme = parsed.scheme();
+            if scheme != "http" && scheme != "https" {
+                return Err(PostError::Validation(
+                    "URL must use http or https scheme".to_string(),
+                ));
+            }
+        }
+        if body_effective.is_none() && url_effective.is_none() {
+            return Err(PostError::Validation(
+                "Post must have body or URL".to_string(),
+            ));
+        }
+
+        let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
+            .one(db)
+            .await?
+            .ok_or(PostError::NotFound)?
+            .into();
+        post.title = Set(title.to_string());
+        post.body = Set(body_effective.map(|s| s.to_string()));
+        post.url = Set(url_effective.map(|s| s.to_string()));
+        post.updated_at = Set(chrono::Utc::now().into());
+        Ok(post.update(db).await?)
     }
 
     #[instrument(skip(db))]

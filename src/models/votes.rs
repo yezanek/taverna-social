@@ -15,6 +15,46 @@ pub struct VoteModel;
 
 impl VoteModel {
     #[instrument(skip(db))]
+    pub async fn delete_vote(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+        post_id: Option<Uuid>,
+        comment_id: Option<Uuid>,
+    ) -> Result<(), sea_orm::DbErr> {
+        if post_id.is_some() == comment_id.is_some() {
+            return Err(sea_orm::DbErr::Custom(
+                "Exactly one of post_id or comment_id must be set".to_string(),
+            ));
+        }
+
+        let existing = if let Some(pid) = post_id {
+            votes::Entity::find()
+                .filter(votes::Column::UserId.eq(user_id))
+                .filter(votes::Column::PostId.eq(pid))
+                .one(db)
+                .await?
+        } else {
+            let cid = comment_id.ok_or_else(|| {
+                sea_orm::DbErr::Custom(
+                    "Exactly one of post_id or comment_id must be set".to_string(),
+                )
+            })?;
+            votes::Entity::find()
+                .filter(votes::Column::UserId.eq(user_id))
+                .filter(votes::Column::CommentId.eq(cid))
+                .one(db)
+                .await?
+        };
+
+        if let Some(vote) = existing {
+            votes::Entity::delete_by_id(vote.id).exec(db).await?;
+            Self::recalculate_after_vote(db, post_id, comment_id).await?;
+        }
+
+        Ok(())
+    }
+
+    #[instrument(skip(db))]
     pub async fn cast_vote(
         db: &DatabaseConnection,
         user_id: Uuid,
@@ -38,7 +78,11 @@ impl VoteModel {
                 .one(db)
                 .await?
         } else {
-            let cid = comment_id.unwrap();
+            let cid = comment_id.ok_or_else(|| {
+                sea_orm::DbErr::Custom(
+                    "Exactly one of post_id or comment_id must be set".to_string(),
+                )
+            })?;
             votes::Entity::find()
                 .filter(votes::Column::UserId.eq(user_id))
                 .filter(votes::Column::CommentId.eq(cid))
