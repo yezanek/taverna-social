@@ -2,6 +2,7 @@
 
 pub use super::comments::Entity as Comments;
 pub use super::communities::Entity as Communities;
+pub use super::community_bans::Entity as CommunityBans;
 pub use super::community_members::Entity as CommunityMembers;
 pub use super::federation_objects::Entity as FederationObjects;
 pub use super::follows::Entity as Follows;

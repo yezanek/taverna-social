@@ -1,6 +1,7 @@
 pub mod _entities;
 pub mod comments;
 pub mod communities;
+pub mod community_bans;
 pub mod community_members;
 pub mod federation_objects;
 pub mod follows;

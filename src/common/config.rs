@@ -18,7 +18,9 @@ impl TavernaConfig {
     pub fn from_env() -> Result<Self, String> {
         let base_url =
             std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
-        let domain = std::env::var("DOMAIN").unwrap_or_else(|_| "localhost:3000".to_string());
+        let domain = std::env::var("TAVERNA_DOMAIN")
+            .or_else(|_| std::env::var("DOMAIN"))
+            .unwrap_or_else(|_| "localhost:3000".to_string());
         let federation_enabled = match std::env::var("FEDERATION_ENABLED") {
             Ok(v) => match v.to_lowercase().as_str() {
                 "true" => true,

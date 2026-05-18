@@ -18,7 +18,7 @@
 </div>
 
 <h3>Comments</h3>
-{% if current_user %}
+{% if current_user and not post.is_locked %}
   <div class="card">
     <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

@@ -2,8 +2,9 @@ use crate::models::_entities::{comments, votes};
 use sea_orm::sea_query::Value;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
-    QueryFilter, QueryResult, Set, Statement,
+    PaginatorTrait, QueryFilter, QueryOrder, QueryResult, Set, Statement,
 };
+use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -57,6 +58,13 @@ pub enum CommentError {
     Db(#[from] sea_orm::DbErr),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommentWithPost {
+    pub comment: comments::Model,
+    pub post_title: String,
+    pub post_community_slug: Option<String>,
 }
 
 pub struct CommentModel;
@@ -120,6 +128,13 @@ impl CommentModel {
         );
 
         db.execute(stmt).await?;
+
+        let update_stmt = Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1"#,
+            vec![Value::Uuid(Some(Box::new(post_id)))],
+        );
+        db.execute(update_stmt).await?;
 
         let result = Self::raw_find_by_id(db, id)
             .await?
@@ -192,6 +207,55 @@ impl CommentModel {
         comment.update(db).await?;
 
         Ok(score)
+    }
+
+    #[instrument(skip(db))]
+    pub async fn list_for_author(
+        db: &DatabaseConnection,
+        author_id: Uuid,
+        page: u64,
+        per_page: u64,
+    ) -> Result<(Vec<CommentWithPost>, u64), sea_orm::DbErr> {
+        let base_query = comments::Entity::find()
+            .filter(comments::Column::AuthorId.eq(author_id))
+            .filter(comments::Column::IsDeleted.eq(false));
+
+        let num_pages = base_query
+            .clone()
+            .paginate(db, per_page)
+            .num_pages()
+            .await?;
+
+        let models = base_query
+            .order_by_desc(comments::Column::PublishedAt)
+            .paginate(db, per_page)
+            .fetch_page(page)
+            .await?;
+
+        let mut results = Vec::new();
+        for c in models {
+            let post = crate::models::_entities::posts::Entity::find_by_id(c.post_id)
+                .one(db)
+                .await?;
+            let slug = if let Some(ref p) = post {
+                if let Some(cid) = p.community_id {
+                    crate::models::_entities::communities::Entity::find_by_id(cid)
+                        .one(db)
+                        .await?
+                        .map(|comm| comm.slug)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            results.push(CommentWithPost {
+                comment: c,
+                post_title: post.as_ref().map(|p| p.title.clone()).unwrap_or_default(),
+                post_community_slug: slug,
+            });
+        }
+        Ok((results, num_pages))
     }
 
     #[instrument(skip(db))]

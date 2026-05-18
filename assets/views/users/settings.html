@@ -1,0 +1,54 @@
+{% extends "layouts/base.html" %}
+{% block title %}Account Settings - Taverna{% endblock %}
+{% block content %}
+<h1>Account Settings</h1>
+
+<form method="POST" action="/settings" style="max-width:500px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <div style="margin-bottom:0.75rem">
+    <label style="display:block;margin-bottom:0.25rem;font-weight:bold">Display Name</label>
+    <input type="text" name="display_name" value="{{ user.display_name | default(value='') }}" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+  </div>
+
+  <div style="margin-bottom:0.75rem">
+    <label style="display:block;margin-bottom:0.25rem;font-weight:bold">Bio</label>
+    <textarea name="bio" rows="4" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">{{ user.bio | default(value='') }}</textarea>
+  </div>
+
+  <div style="margin-bottom:0.75rem">
+    <label style="display:block;margin-bottom:0.25rem;font-weight:bold">Avatar URL (must be HTTPS)</label>
+    <input type="text" name="avatar_url" value="{{ user.avatar_url | default(value='') }}" placeholder="https://..." style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+  </div>
+
+  <div style="margin-bottom:0.75rem">
+    <label style="display:block;margin-bottom:0.25rem;font-weight:bold">Email</label>
+    <input type="email" name="email" value="{{ user.email | default(value='') }}" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+  </div>
+
+  <button type="submit" class="btn">Save Settings</button>
+</form>
+
+<h2 style="margin-top:2rem">Change Password</h2>
+
+<form method="POST" action="/settings/password" style="max-width:500px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <div style="margin-bottom:0.75rem">
+    <label style="display:block;margin-bottom:0.25rem;font-weight:bold">Current Password</label>
+    <input type="password" name="current_password" required style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+  </div>
+
+  <div style="margin-bottom:0.75rem">
+    <label style="display:block;margin-bottom:0.25rem;font-weight:bold">New Password</label>
+    <input type="password" name="new_password" required minlength="8" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+  </div>
+
+  <div style="margin-bottom:0.75rem">
+    <label style="display:block;margin-bottom:0.25rem;font-weight:bold">Confirm New Password</label>
+    <input type="password" name="new_password_confirm" required minlength="8" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+  </div>
+
+  <button type="submit" class="btn">Change Password</button>
+</form>
+{% endblock %}

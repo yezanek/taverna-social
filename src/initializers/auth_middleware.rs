@@ -2,6 +2,7 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
 };
+use loco_rs::controller::ErrorDetail;
 use loco_rs::{Error, app::AppContext};
 use tracing::instrument;
 
@@ -47,6 +48,13 @@ where
             .map_err(|_| Error::Unauthorized("User not found".to_string()))?
             .ok_or_else(|| Error::Unauthorized("User not found".to_string()))?;
 
+        if user.is_banned {
+            return Err(Error::CustomError(
+                axum::http::StatusCode::FORBIDDEN,
+                ErrorDetail::with_reason("Account is banned"),
+            ));
+        }
+
         Ok(Self(user))
     }
 }
@@ -86,6 +94,10 @@ where
             Ok(Some(u)) => u,
             _ => return Ok(Self(None)),
         };
+
+        if user.is_banned {
+            return Ok(Self(None));
+        }
 
         Ok(Self(Some(user)))
     }

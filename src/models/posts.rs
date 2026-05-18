@@ -120,6 +120,23 @@ impl PostModel {
     }
 
     #[instrument(skip(db))]
+    pub async fn list_for_author(
+        db: &DatabaseConnection,
+        author_id: Uuid,
+        page: u64,
+        per_page: u64,
+    ) -> Result<(Vec<posts::Model>, u64), sea_orm::DbErr> {
+        let paginator = posts::Entity::find()
+            .filter(posts::Column::AuthorId.eq(author_id))
+            .filter(posts::Column::IsDeleted.eq(false))
+            .order_by_desc(posts::Column::PublishedAt)
+            .paginate(db, per_page);
+        let num_pages = paginator.num_pages().await?;
+        let posts = paginator.fetch_page(page).await?;
+        Ok((posts, num_pages))
+    }
+
+    #[instrument(skip(db))]
     pub async fn list_all(
         db: &DatabaseConnection,
         page: u64,
@@ -181,6 +198,40 @@ impl PostModel {
         post.updated_at = Set(chrono::Utc::now().into());
         post.update(db).await?;
         Ok(())
+    }
+
+    #[instrument(skip(db))]
+    pub async fn toggle_pin(
+        db: &DatabaseConnection,
+        post_id: Uuid,
+    ) -> Result<bool, sea_orm::DbErr> {
+        let post: posts::Model = posts::Entity::find_by_id(post_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?;
+        let mut active: posts::ActiveModel = post.into();
+        let new_pinned = !active.is_pinned.take().unwrap_or(false);
+        active.is_pinned = Set(new_pinned);
+        active.updated_at = Set(chrono::Utc::now().into());
+        active.update(db).await?;
+        Ok(new_pinned)
+    }
+
+    #[instrument(skip(db))]
+    pub async fn toggle_lock(
+        db: &DatabaseConnection,
+        post_id: Uuid,
+    ) -> Result<bool, sea_orm::DbErr> {
+        let post: posts::Model = posts::Entity::find_by_id(post_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?;
+        let mut active: posts::ActiveModel = post.into();
+        let new_locked = !active.is_locked.take().unwrap_or(false);
+        active.is_locked = Set(new_locked);
+        active.updated_at = Set(chrono::Utc::now().into());
+        active.update(db).await?;
+        Ok(new_locked)
     }
 
     #[instrument(skip(db))]
