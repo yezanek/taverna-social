@@ -183,6 +183,27 @@ impl CommunityModel {
         Ok(())
     }
 
+    #[instrument(skip(db))]
+    pub async fn soft_delete(
+        db: &DatabaseConnection,
+        community_id: Uuid,
+    ) -> Result<(), sea_orm::DbErr> {
+        let mut community: communities::ActiveModel = communities::Entity::find_by_id(community_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound(
+                "Community not found".to_string(),
+            ))?
+            .into();
+        community.name = Set("[deleted]".to_string());
+        community.description = Set(Some(
+            "[This community has been deleted by an admin]".to_string(),
+        ));
+        community.updated_at = Set(chrono::Utc::now().into());
+        community.update(db).await?;
+        Ok(())
+    }
+
     const MAX_NAME_LEN: usize = 100;
     const MAX_DESCRIPTION_LEN: usize = 5000;
 

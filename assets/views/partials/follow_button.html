@@ -1,0 +1,13 @@
+<div id="follow-button">
+  {% if is_following %}
+    <form method="POST" action="/u/{{ username }}/unfollow" style="display:inline" hx-post="/u/{{ username }}/unfollow" hx-target="#follow-button" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border)">Unfollow</button>
+    </form>
+  {% else %}
+    <form method="POST" action="/u/{{ username }}/follow" style="display:inline" hx-post="/u/{{ username }}/follow" hx-target="#follow-button" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn">Follow</button>
+    </form>
+  {% endif %}
+</div>

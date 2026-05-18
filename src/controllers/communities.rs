@@ -15,7 +15,9 @@ use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::communities::CommunityModel;
+use crate::models::community_bans::Entity as CommunityBansEntity;
 use crate::models::posts::PostModel;
+use crate::models::users::UserModel;
 use crate::views::helpers;
 
 const PER_PAGE: u64 = 20;
@@ -223,6 +225,15 @@ pub async fn create_post(
         return Err(Error::Unauthorized("You must join to post".to_string()));
     }
 
+    let banned = CommunityBansEntity::is_banned(&ctx.db, community.id, current_user.id)
+        .await
+        .unwrap_or(false);
+    if banned {
+        return Err(Error::Unauthorized(
+            "You are banned from this community".to_string(),
+        ));
+    }
+
     if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
@@ -425,6 +436,82 @@ pub async fn update_settings(
     )
     .await
     .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
+}
+
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn ban_user(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, username)): Path<(String, String)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let target = UserModel::find_by_username(&ctx.db, &username)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    CommunityBansEntity::create_ban(&ctx.db, community.id, target.id, current_user.id, None)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
+}
+
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn unban_user(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, username)): Path<(String, String)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let target = UserModel::find_by_username(&ctx.db, &username)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    CommunityBansEntity::remove_ban(&ctx.db, community.id, target.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
 
     Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
 }

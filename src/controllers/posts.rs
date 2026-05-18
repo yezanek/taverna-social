@@ -15,6 +15,7 @@ use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::comments::CommentModel;
 use crate::models::communities::CommunityModel;
+use crate::models::community_bans::Entity as CommunityBansEntity;
 use crate::models::posts::PostModel;
 use crate::models::users::UserModel;
 use crate::models::votes::VoteModel;
@@ -360,6 +361,25 @@ pub async fn create_comment(
         return Err(Error::NotFound);
     }
 
+    if post.is_locked {
+        return Err(Error::CustomError(
+            axum::http::StatusCode::FORBIDDEN,
+            loco_rs::controller::ErrorDetail::with_reason("Post is locked"),
+        ));
+    }
+
+    if let Some(community_id) = post.community_id {
+        let banned = CommunityBansEntity::is_banned(&ctx.db, community_id, current_user.id)
+            .await
+            .unwrap_or(false);
+        if banned {
+            return Err(Error::CustomError(
+                axum::http::StatusCode::FORBIDDEN,
+                loco_rs::controller::ErrorDetail::with_reason("You are banned from this community"),
+            ));
+        }
+    }
+
     if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
@@ -543,4 +563,137 @@ pub async fn vote_comment(
             "csrf_token": form.csrf_token,
         }),
     )
+}
+
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn remove(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id)): Path<(String, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    PostModel::soft_remove(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}", slug)).into_response())
+}
+
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn pin(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id)): Path<(String, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    PostModel::toggle_pin(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
+}
+
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn lock(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id)): Path<(String, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    PostModel::toggle_lock(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn remove_comment(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id, comment_id)): Path<(String, Uuid, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    CommentModel::soft_delete(&ctx.db, comment_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
 }

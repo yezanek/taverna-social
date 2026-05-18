@@ -173,7 +173,12 @@ mod tests {
                 .get("/u/feduser")
                 .add_header("Accept", "text/html")
                 .await;
-            assert!(response.status_code() == 302 || response.status_code() == 303);
+            let status = response.status_code();
+            let body = response.text();
+            if status != 200 {
+                eprintln!("BODY: {}", body);
+                panic!("Expected 200, got {}: {}", status, body);
+            }
         })
         .await;
     }
