@@ -1,0 +1,15 @@
+{% extends "layouts/base.html" %}
+{% block title %}Edit Comment - {{ community.name }} - Taverna{% endblock %}
+{% block content %}
+<h1>Edit Comment</h1>
+<div class="card">
+  <form method="POST" action="/c/{{ community.slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="form-row">
+      <label for="body">Comment (Markdown)</label>
+      <textarea name="body" id="body" required class="form-textarea">{{ comment.body }}</textarea>
+    </div>
+    <button type="submit" class="btn">Save</button>
+  </form>
+</div>
+{% endblock %}

@@ -302,6 +302,30 @@ impl CommentModel {
         Ok((results, num_pages))
     }
 
+    /// Updates the body of a comment (author edit).
+    #[instrument(skip(db))]
+    pub async fn update(
+        db: &DatabaseConnection,
+        comment_id: Uuid,
+        body: &str,
+    ) -> Result<comments::Model, CommentError> {
+        let body = body.trim();
+        if body.is_empty() {
+            return Err(CommentError::Validation(
+                "Comment body cannot be empty".to_string(),
+            ));
+        }
+
+        let mut comment: comments::ActiveModel = comments::Entity::find_by_id(comment_id)
+            .one(db)
+            .await?
+            .ok_or(CommentError::NotFound)?
+            .into();
+        comment.body = Set(body.to_string());
+        comment.updated_at = Set(chrono::Utc::now().into());
+        Ok(comment.update(db).await?)
+    }
+
     /// Marks a comment as deleted (soft delete — retains the row).
     #[instrument(skip(db))]
     pub async fn soft_delete(

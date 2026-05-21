@@ -341,6 +341,32 @@ pub async fn join(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
+    // Federation: if remote community, send Follow activity
+    if taverna.federation.enabled && !community.is_local {
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let follow_activity = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Follow",
+            "actor": current_user.ap_id,
+            "object": community.ap_id,
+        });
+        let inboxes = vec![community.inbox_url.clone()];
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &follow_activity,
+                &current_user.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
+
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
@@ -366,6 +392,38 @@ pub async fn leave(
     CommunityModel::remove_member(&ctx.db, community.id, current_user.id)
         .await
         .map_err(|_| Error::InternalServerError)?;
+
+    // Federation: if remote community, send Undo{Follow} activity
+    if taverna.federation.enabled && !community.is_local {
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let undo_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let follow_id = format!("{}/follows/{}", current_user.ap_id, community.id);
+        let undo_activity = serde_json::json!({
+            "@context": ap_context,
+            "id": undo_id,
+            "type": "Undo",
+            "actor": current_user.ap_id,
+            "object": {
+                "id": follow_id,
+                "type": "Follow",
+                "actor": current_user.ap_id,
+                "object": community.ap_id,
+            },
+        });
+        let inboxes = vec![community.inbox_url.clone()];
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &undo_activity,
+                &current_user.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
 
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }

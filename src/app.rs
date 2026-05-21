@@ -14,9 +14,11 @@ use migration::Migrator;
 use crate::common::config::TavernaConfig;
 use crate::controllers::{admin, auth, communities, federation, home, posts, theme, users};
 use crate::initializers;
+use crate::initializers::theme_middleware::{CurrentTheme, extract_theme};
 use axum::Extension;
 use axum::response::{IntoResponse, Response};
 use loco_rs::controller::views::{ViewEngine, engines::TeraView};
+use serde_json::json;
 
 pub struct App;
 #[async_trait]
@@ -98,6 +100,10 @@ impl Hooks for App {
             .add(
                 "/c/{slug}/posts/{id}/comments/{cid}/vote",
                 post(posts::vote_comment),
+            )
+            .add(
+                "/c/{slug}/posts/{id}/comments/{cid}/edit",
+                get(posts::edit_comment_form).post(posts::update_comment),
             )
             .add(
                 "/c/{slug}/posts/{id}/comments/{cid}/remove",
@@ -230,8 +236,17 @@ impl Hooks for App {
     }
 }
 
-async fn handle_404(ViewEngine(v): ViewEngine<TeraView>) -> impl IntoResponse {
-    let html = match v.render("errors/404.html", serde_json::json!({})) {
+async fn handle_404(
+    ViewEngine(v): ViewEngine<TeraView>,
+    Extension(theme): Extension<CurrentTheme>,
+) -> impl IntoResponse {
+    let html = match v.render(
+        "errors/404.html",
+        json!({
+            "current_user": None::<crate::models::_entities::users::Model>,
+            "theme": theme.0,
+        }),
+    ) {
         Ok(h) => h,
         Err(_) => "404 Not Found".to_string(),
     };
@@ -254,6 +269,7 @@ async fn error_pages_middleware(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let theme = extract_theme(req.headers()).unwrap_or_else(|| "light".to_string());
     let view_engine = req.extensions().get::<ViewEngine<TeraView>>().cloned();
     let mut response = next.run(req).await;
 
@@ -297,7 +313,13 @@ async fn error_pages_middleware(
         _ => "errors/500.html",
     };
 
-    let html = match engine.0.render(template, serde_json::json!({})) {
+    let html = match engine.0.render(
+        template,
+        json!({
+            "theme": theme,
+            "current_user": None::<crate::models::_entities::users::Model>,
+        }),
+    ) {
         Ok(h) => h,
         Err(_) => return response,
     };

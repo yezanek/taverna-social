@@ -29,6 +29,9 @@
     </button>
   </div>
   {% if current_user %}
+    {% if current_user.id == comment.author_id %}
+    | <a href="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/edit" style="color:var(--link);font-size:0.85rem">Edit</a>
+    {% endif %}
     <button class="reply-btn" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:0.85rem;padding:0;margin-top:0.25rem"
       onclick="document.getElementById('reply-form-{{ comment.id }}').style.display='block'">
       Reply
