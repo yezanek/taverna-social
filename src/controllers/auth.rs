@@ -12,6 +12,7 @@ use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::users::{UserError, UserModel};
 use crate::views::helpers;
 
+/// Form data for user registration.
 #[derive(Debug, Deserialize)]
 pub struct RegisterForm {
     pub username: String,
@@ -22,6 +23,7 @@ pub struct RegisterForm {
     pub csrf_token: Option<String>,
 }
 
+/// Form data for user login.
 #[derive(Debug, Deserialize)]
 pub struct LoginForm {
     pub email: String,
@@ -30,6 +32,7 @@ pub struct LoginForm {
     pub csrf_token: Option<String>,
 }
 
+/// Renders the registration page with a CSRF token.
 #[instrument(skip(v, jar))]
 pub async fn register_form(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -52,6 +55,7 @@ pub async fn register_form(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Handles user registration form submission.
 #[instrument(skip(v, jar, ctx, form))]
 pub async fn register(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -129,6 +133,7 @@ pub async fn register(
     }
 }
 
+/// Renders the login page with a CSRF token.
 #[instrument(skip(v, jar))]
 pub async fn login_form(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -151,6 +156,7 @@ pub async fn login_form(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Handles login form submission and issues JWT cookies on success.
 #[instrument(skip(v, jar, ctx, form))]
 pub async fn login(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -216,6 +222,7 @@ pub async fn login(
     Ok((jar.add(access_cookie).add(refresh_cookie), response).into_response())
 }
 
+/// Clears the auth cookies and redirects to login.
 #[instrument(skip(jar))]
 pub async fn logout(
     jar: CookieJar,
@@ -243,6 +250,7 @@ pub async fn logout(
     Ok((jar.add(access_cookie).add(refresh_cookie), response).into_response())
 }
 
+/// Validates the CSRF token from the form against the cookie and checks origin.
 pub(crate) fn validate_csrf(
     jar: &CookieJar,
     form_token: Option<&str>,
@@ -270,6 +278,7 @@ pub(crate) fn validate_csrf(
     }
 }
 
+/// Renders a template with a fresh CSRF cookie, carrying over existing cookie jar.
 #[allow(clippy::result_large_err)]
 fn render_with_csrf(
     v: &TeraView,

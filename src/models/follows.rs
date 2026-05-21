@@ -17,6 +17,7 @@ impl ActiveModelBehavior for ActiveModel {
 }
 
 impl Entity {
+    /// Counts the number of accepted followers for a user.
     pub async fn count_followers(db: &DatabaseConnection, user_id: Uuid) -> Result<u64, DbErr> {
         Entity::find()
             .filter(Column::FollowingId.eq(user_id))
@@ -25,6 +26,7 @@ impl Entity {
             .await
     }
 
+    /// Counts the number of users being followed by a user.
     pub async fn count_following(db: &DatabaseConnection, user_id: Uuid) -> Result<u64, DbErr> {
         Entity::find()
             .filter(Column::FollowerId.eq(user_id))
@@ -34,6 +36,7 @@ impl Entity {
             .await
     }
 
+    /// Finds a specific follow relationship between two users.
     pub async fn find_follow(
         db: &DatabaseConnection,
         follower_id: Uuid,
@@ -46,6 +49,7 @@ impl Entity {
             .await
     }
 
+    /// Creates a local follow relationship (immediately accepted).
     pub async fn create_local_follow(
         db: &DatabaseConnection,
         follower_id: Uuid,
@@ -63,6 +67,7 @@ impl Entity {
         model.insert(db).await
     }
 
+    /// Deletes a follow relationship between two users.
     pub async fn delete_follow(
         db: &DatabaseConnection,
         follower_id: Uuid,

@@ -185,16 +185,6 @@ mod tests {
         let boot = boot_test::<App>().await.unwrap();
         let db = &boot.app_context.db;
 
-        let _admin = UserModel::create_local(
-            db,
-            "admin_ban",
-            "admin_ban@example.com",
-            "password123",
-            "http://localhost:5150",
-        )
-        .await
-        .unwrap();
-
         let target = UserModel::create_local(
             db,
             "target_ban",

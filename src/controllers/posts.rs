@@ -21,6 +21,7 @@ use crate::models::users::UserModel;
 use crate::models::votes::VoteModel;
 use crate::views::helpers;
 
+/// Form data for editing a post.
 #[derive(Debug, Deserialize)]
 pub struct EditPostForm {
     pub title: String,
@@ -32,6 +33,7 @@ pub struct EditPostForm {
     pub csrf_token: Option<String>,
 }
 
+/// Form data for casting a vote (upvote/downvote).
 #[derive(Debug, Deserialize)]
 pub struct VoteForm {
     pub vote: i16,
@@ -39,6 +41,7 @@ pub struct VoteForm {
     pub csrf_token: Option<String>,
 }
 
+/// Form data for creating a comment.
 #[derive(Debug, Deserialize)]
 pub struct CommentForm {
     pub body: String,
@@ -48,6 +51,7 @@ pub struct CommentForm {
     pub csrf_token: Option<String>,
 }
 
+/// Shows a single post with its comments, author info, and voting UI.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn detail(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -160,6 +164,7 @@ pub async fn detail(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Casts or toggles a vote on a post (upvote/downvote). Returns vote button partial.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, jar, headers, taverna, form))]
 pub async fn vote(
@@ -275,6 +280,7 @@ pub async fn vote(
     )
 }
 
+/// Renders the edit form for a post (author only).
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn edit_form(
@@ -325,6 +331,7 @@ pub async fn edit_form(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Updates a post (author only). Enqueues AP Update activity.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(ctx, form, jar, headers, taverna))]
 pub async fn update_post(
@@ -418,6 +425,7 @@ pub async fn update_post(
     Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
 }
 
+/// Soft-deletes a post (author, moderator, or admin). Enqueues AP Delete activity.
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn delete(
     State(ctx): State<AppContext>,
@@ -441,7 +449,13 @@ pub async fn delete(
         return Err(Error::NotFound);
     }
 
-    if post.author_id != current_user.id && !current_user.is_admin {
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    let is_mod = role.as_deref() == Some("moderator");
+
+    if post.author_id != current_user.id && !is_mod && !current_user.is_admin {
         return Err(Error::Unauthorized("Not authorized".to_string()));
     }
 
@@ -491,6 +505,7 @@ pub async fn delete(
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
+/// Creates a comment on a post with federation support.
 #[instrument(skip(ctx, form, jar, headers, taverna))]
 pub async fn create_comment(
     State(ctx): State<AppContext>,
@@ -603,6 +618,7 @@ pub async fn create_comment(
     Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
 }
 
+/// Casts or toggles a vote on a comment. Returns vote button partial.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, jar, headers, taverna, form))]
 pub async fn vote_comment(
@@ -718,6 +734,7 @@ pub async fn vote_comment(
     )
 }
 
+/// Removes a post (moderator or admin only).
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn remove(
     State(ctx): State<AppContext>,
@@ -760,6 +777,7 @@ pub async fn remove(
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
+/// Toggles a post's pinned status (moderator or admin only).
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn pin(
     State(ctx): State<AppContext>,
@@ -802,6 +820,7 @@ pub async fn pin(
     Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
 }
 
+/// Toggles a post's locked status (moderator or admin only).
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn lock(
     State(ctx): State<AppContext>,
@@ -844,6 +863,7 @@ pub async fn lock(
     Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
 }
 
+/// Removes a comment (moderator or admin only).
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn remove_comment(

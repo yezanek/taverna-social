@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use uuid::Uuid;
 
+/// Describes the result of a vote operation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum VoteAction {
     Added,
@@ -14,6 +15,7 @@ pub enum VoteAction {
 pub struct VoteModel;
 
 impl VoteModel {
+    /// Deletes a user's vote on a post or comment.
     #[instrument(skip(db))]
     pub async fn delete_vote(
         db: &DatabaseConnection,
@@ -54,6 +56,8 @@ impl VoteModel {
         Ok(())
     }
 
+    /// Casts or toggles a vote (upvote/downvote) on a post or comment.
+    /// Returns whether the vote was Added, Changed, or Removed.
     #[instrument(skip(db))]
     pub async fn cast_vote(
         db: &DatabaseConnection,
@@ -134,6 +138,7 @@ impl VoteModel {
         Ok(())
     }
 
+    /// Returns the current user's vote value on a post, if any.
     #[instrument(skip(db))]
     pub async fn get_user_vote_on_post(
         db: &DatabaseConnection,
@@ -148,6 +153,7 @@ impl VoteModel {
             .map(|v| v.map(|v| v.value))
     }
 
+    /// Returns the current user's vote value on a comment, if any.
     #[instrument(skip(db))]
     pub async fn get_user_vote_on_comment(
         db: &DatabaseConnection,

@@ -49,6 +49,7 @@ fn opt_row_to_comment(rows: Vec<QueryResult>) -> Result<Option<comments::Model>,
     }
 }
 
+/// Errors that can occur during comment operations.
 #[derive(Debug, thiserror::Error)]
 pub enum CommentError {
     #[error("Validation error: {0}")]
@@ -63,6 +64,7 @@ pub enum CommentError {
     Other(#[from] anyhow::Error),
 }
 
+/// A comment paired with its parent post title and community slug for display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommentWithPost {
     pub comment: comments::Model,
@@ -73,6 +75,8 @@ pub struct CommentWithPost {
 pub struct CommentModel;
 
 impl CommentModel {
+    /// Creates a new comment on a post, optionally as a reply to another comment.
+    /// Uses ltree paths for threaded ordering.
     #[instrument(skip(db))]
     pub async fn create(
         db: &DatabaseConnection,
@@ -163,6 +167,7 @@ impl CommentModel {
         Ok(result)
     }
 
+    /// Lists non-deleted comments for a post in thread order.
     #[instrument(skip(db))]
     pub async fn list_for_post(
         db: &DatabaseConnection,
@@ -182,6 +187,7 @@ impl CommentModel {
         rows_to_comments(rows)
     }
 
+    /// Finds a comment by its UUID primary key.
     #[instrument(skip(db))]
     pub async fn find_by_id(
         db: &DatabaseConnection,
@@ -204,6 +210,7 @@ impl CommentModel {
         opt_row_to_comment(rows)
     }
 
+    /// Recalculates the score of a comment by summing all vote values.
     #[instrument(skip(db))]
     pub async fn recalculate_score(
         db: &DatabaseConnection,
@@ -229,6 +236,8 @@ impl CommentModel {
         Ok(score)
     }
 
+    /// Lists non-deleted comments by a specific author with pagination,
+    /// enriched with post titles and community slugs.
     #[instrument(skip(db))]
     pub async fn list_for_author(
         db: &DatabaseConnection,
@@ -293,6 +302,7 @@ impl CommentModel {
         Ok((results, num_pages))
     }
 
+    /// Marks a comment as deleted (soft delete — retains the row).
     #[instrument(skip(db))]
     pub async fn soft_delete(
         db: &DatabaseConnection,

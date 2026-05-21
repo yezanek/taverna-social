@@ -8,6 +8,7 @@
   --border: #e0e0e0;
   --accent: #8b3a3a;
   --accent-hover: #6d2e2e;
+  --text-on-accent: #ffffff;
   --upvote: #e05a00;
   --downvote: #5a7eb5;
   --link: #3a5f8b;
@@ -28,6 +29,7 @@
   --border: #2a2a4e;
   --accent: #c0566a;
   --accent-hover: #e0687c;
+  --text-on-accent: #ffffff;
   --upvote: #ff7b3a;
   --downvote: #7ab0e8;
   --link: #7ab0e8;
@@ -48,6 +50,7 @@
   --border: #d4c4a0;
   --accent: #8b5e3c;
   --accent-hover: #6d4830;
+  --text-on-accent: #f4ecd8;
   --upvote: #b06020;
   --downvote: #4a6a8a;
   --link: #6b4226;

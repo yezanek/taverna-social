@@ -6,6 +6,7 @@ pub type CommunityBans = Entity;
 impl Model {}
 
 impl Entity {
+    /// Checks whether a user is currently banned from a community.
     pub async fn is_banned(
         db: &DatabaseConnection,
         community_id: Uuid,
@@ -19,6 +20,7 @@ impl Entity {
         Ok(count > 0)
     }
 
+    /// Bans a user from a community, recording the moderator who issued it.
     pub async fn create_ban(
         db: &DatabaseConnection,
         community_id: Uuid,
@@ -38,6 +40,7 @@ impl Entity {
         Ok(())
     }
 
+    /// Removes a ban, allowing the user to rejoin the community.
     pub async fn remove_ban(
         db: &DatabaseConnection,
         community_id: Uuid,

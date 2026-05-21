@@ -8,6 +8,7 @@ const CACHE_TTL_MINUTES: i64 = 30;
 pub struct FederationObjectModel;
 
 impl FederationObjectModel {
+    /// Returns a cached remote object if it was fetched within `CACHE_TTL_MINUTES`.
     #[instrument(skip(db))]
     pub async fn get_fresh(
         db: &DatabaseConnection,
@@ -33,6 +34,7 @@ impl FederationObjectModel {
         }
     }
 
+    /// Inserts or updates a cached federation object.
     #[instrument(skip(db))]
     pub async fn upsert(
         db: &DatabaseConnection,

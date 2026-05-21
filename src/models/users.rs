@@ -10,6 +10,7 @@ use sea_orm::{
 };
 use tracing::instrument;
 
+/// Errors that can occur during user operations.
 #[derive(Debug, thiserror::Error)]
 pub enum UserError {
     #[error("Invalid username: {0}")]
@@ -29,6 +30,7 @@ pub enum UserError {
 pub struct UserModel;
 
 impl UserModel {
+    /// Creates a new local user with hashed password, keypair, and AP IDs.
     #[instrument(skip(db, password))]
     pub async fn create_local(
         db: &DatabaseConnection,
@@ -108,6 +110,7 @@ impl UserModel {
         Ok(user)
     }
 
+    /// Finds a user by their email address.
     #[instrument(skip(db))]
     pub async fn find_by_email(
         db: &DatabaseConnection,
@@ -120,6 +123,7 @@ impl UserModel {
             .await
     }
 
+    /// Finds a user by their username (case-insensitive lookup).
     #[instrument(skip(db))]
     pub async fn find_by_username(
         db: &DatabaseConnection,
@@ -132,6 +136,7 @@ impl UserModel {
             .await
     }
 
+    /// Finds a user by their UUID primary key.
     #[instrument(skip(db))]
     pub async fn find_by_id(
         db: &DatabaseConnection,
@@ -143,6 +148,7 @@ impl UserModel {
             .await
     }
 
+    /// Finds a user by their ActivityPub ID.
     #[instrument(skip(db))]
     pub async fn find_by_ap_id(
         db: &DatabaseConnection,
@@ -154,11 +160,13 @@ impl UserModel {
             .await
     }
 
+    /// Generates an RSA keypair for ActivityPub HTTP signatures.
     pub fn generate_keypair() -> Result<(String, String), anyhow::Error> {
         let keypair = generate_actor_keypair()?;
         Ok((keypair.public_key, keypair.private_key))
     }
 
+    /// Updates a user's display name, bio, and avatar URL.
     #[instrument(skip(db))]
     pub async fn update_profile(
         db: &DatabaseConnection,
@@ -211,6 +219,7 @@ impl UserModel {
         Ok(result)
     }
 
+    /// Updates a user's email address, checking for duplicates.
     #[instrument(skip(db))]
     pub async fn update_email(
         db: &DatabaseConnection,
@@ -240,6 +249,7 @@ impl UserModel {
         Ok(())
     }
 
+    /// Changes a user's password after verifying the current password.
     #[instrument(skip(db))]
     pub async fn change_password(
         db: &DatabaseConnection,
@@ -286,6 +296,7 @@ impl UserModel {
         Ok(())
     }
 
+    /// Sets or clears the banned flag on a user account.
     #[instrument(skip(db))]
     pub async fn set_banned(
         db: &DatabaseConnection,
@@ -303,6 +314,7 @@ impl UserModel {
         Ok(())
     }
 
+    /// Lists all users with pagination, ordered by username.
     #[instrument(skip(db))]
     pub async fn list_all(
         db: &DatabaseConnection,
@@ -317,6 +329,7 @@ impl UserModel {
         Ok((users, num_pages))
     }
 
+    /// Verifies a plaintext password against the stored argon2 hash.
     pub async fn verify_password(model: &users::Model, password: &str) -> bool {
         let password_hash = match &model.password_hash {
             Some(h) => h.clone(),

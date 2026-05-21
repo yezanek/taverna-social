@@ -22,6 +22,7 @@ fn cache() -> &'static Mutex<Option<NodeInfoCache>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
+/// Serves the NodeInfo well-known endpoint pointing to the schema URL.
 #[instrument(skip(_ctx, taverna))]
 pub async fn well_known_nodeinfo(
     State(_ctx): State<AppContext>,
@@ -37,6 +38,7 @@ pub async fn well_known_nodeinfo(
     Ok(axum::Json(link).into_response())
 }
 
+/// Serves the NodeInfo 2.0 document with usage statistics.
 #[instrument(skip(ctx))]
 pub async fn nodeinfo_v2(State(ctx): State<AppContext>) -> Result<Response> {
     let (total_users, total_posts) = get_cached_counts(&ctx.db)

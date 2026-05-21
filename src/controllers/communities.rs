@@ -22,6 +22,7 @@ use crate::views::helpers;
 
 const PER_PAGE: u64 = 20;
 
+/// Form data for creating a community post.
 #[derive(Debug, Deserialize)]
 pub struct CreatePostForm {
     pub title: String,
@@ -33,6 +34,7 @@ pub struct CreatePostForm {
     pub csrf_token: Option<String>,
 }
 
+/// Form data for updating community settings.
 #[derive(Debug, Deserialize)]
 pub struct CommunitySettingsForm {
     pub name: Option<String>,
@@ -43,6 +45,7 @@ pub struct CommunitySettingsForm {
     pub csrf_token: Option<String>,
 }
 
+/// Lists all communities.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn list(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -76,6 +79,7 @@ pub async fn list(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Shows a community's feed (posts) or its ActivityPub actor representation.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn feed(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -163,6 +167,7 @@ pub async fn feed(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Renders the form to create a new post in a community.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn new_post_form(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -205,6 +210,7 @@ pub async fn new_post_form(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Handles community post creation with federation support.
 #[instrument(skip(ctx, form, jar, headers, taverna))]
 pub async fn create_post(
     State(ctx): State<AppContext>,
@@ -228,15 +234,6 @@ pub async fn create_post(
         return Err(Error::Unauthorized("You must join to post".to_string()));
     }
 
-    if CommunityBansEntity::is_banned(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?
-    {
-        return Err(Error::Unauthorized(
-            "You are banned from this community".to_string(),
-        ));
-    }
-
     if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
@@ -251,7 +248,12 @@ pub async fn create_post(
         &taverna.base_url,
     )
     .await
-    .map_err(|_| Error::InternalServerError)?;
+    .map_err(|e| match e {
+        crate::models::posts::PostError::Banned => {
+            Error::Unauthorized("You are banned from this community".to_string())
+        }
+        _ => Error::InternalServerError,
+    })?;
 
     // Federation: enqueue Create activity to community followers
     if taverna.federation.enabled {
@@ -296,20 +298,27 @@ pub async fn create_post(
         )
         .await
         .unwrap_or_default();
-        if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+        if !inboxes.is_empty()
+            && let Err(e) = crate::workers::deliver_activity::enqueue_to_followers(
                 &ctx.db,
                 &create,
                 &author.ap_id,
                 inboxes,
             )
-            .await;
+            .await
+        {
+            tracing::error!(
+                "failed to enqueue to followers for activity {}: {:?}",
+                create["id"],
+                e
+            );
         }
     }
 
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
+/// Joins the current user to a community as a member.
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn join(
     State(ctx): State<AppContext>,
@@ -335,6 +344,7 @@ pub async fn join(
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
+/// Removes the current user from a community's member list.
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn leave(
     State(ctx): State<AppContext>,
@@ -360,6 +370,7 @@ pub async fn leave(
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
+/// Renders community settings form (moderator only).
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn settings_form(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -402,6 +413,7 @@ pub async fn settings_form(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Updates community settings (moderator only).
 #[instrument(skip(ctx, form, jar, headers, taverna))]
 pub async fn update_settings(
     State(ctx): State<AppContext>,
@@ -443,6 +455,7 @@ pub async fn update_settings(
     Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
 }
 
+/// Bans a user from the community (moderator only).
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn ban_user(
     State(ctx): State<AppContext>,
@@ -481,6 +494,7 @@ pub async fn ban_user(
     Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
 }
 
+/// Unbans a user from the community (moderator only).
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn unban_user(
     State(ctx): State<AppContext>,

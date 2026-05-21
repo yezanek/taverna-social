@@ -110,7 +110,9 @@ impl Hooks for App {
 
         let user_routes = loco_rs::controller::Routes::new()
             .add("/u/{username}", get(users::profile))
+            .add("/u/{username}/new", get(users::profile_new_post))
             .add("/u/{username}/posts", get(users::profile_posts))
+            .add("/u/{username}/posts", post(users::create_profile_post))
             .add("/u/{username}/comments", get(users::profile_comments))
             .add("/u/{username}/follow", post(users::follow))
             .add("/u/{username}/unfollow", post(users::unfollow))
@@ -266,7 +268,7 @@ async fn error_pages_middleware(
     // Clear auth cookie on 403 (banned user detection)
     if status == axum::http::StatusCode::FORBIDDEN {
         let headers = response.headers_mut();
-        headers.insert(
+        headers.append(
             axum::http::header::SET_COOKIE,
             axum::http::HeaderValue::from_static(
                 "access_token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",

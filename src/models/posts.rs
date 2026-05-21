@@ -8,6 +8,7 @@ use tracing::instrument;
 use url::Url;
 use uuid::Uuid;
 
+/// Errors that can occur during post operations.
 #[derive(Debug, thiserror::Error)]
 pub enum PostError {
     #[error("Validation error: {0}")]
@@ -25,6 +26,9 @@ pub enum PostError {
 pub struct PostModel;
 
 impl PostModel {
+    /// Creates a new post, optionally within a community.
+    /// Validates title length, ensures body or URL is present, and checks
+    /// that the author is not banned from the target community.
     #[instrument(skip(db))]
     pub async fn create(
         db: &DatabaseConnection,
@@ -92,6 +96,7 @@ impl PostModel {
         Ok(post.insert(db).await?)
     }
 
+    /// Finds a post by its UUID primary key.
     #[instrument(skip(db))]
     pub async fn find_by_id(
         db: &DatabaseConnection,
@@ -100,6 +105,7 @@ impl PostModel {
         posts::Entity::find_by_id(id).one(db).await
     }
 
+    /// Finds a post by its ActivityPub ID.
     #[instrument(skip(db))]
     pub async fn find_by_ap_id(
         db: &DatabaseConnection,
@@ -111,6 +117,7 @@ impl PostModel {
             .await
     }
 
+    /// Lists non-deleted posts in a community, ordered by score then recency.
     #[instrument(skip(db))]
     pub async fn list_for_community(
         db: &DatabaseConnection,
@@ -129,6 +136,7 @@ impl PostModel {
         Ok((posts, num_pages))
     }
 
+    /// Lists non-deleted posts by a specific author, ordered by recency.
     #[instrument(skip(db))]
     pub async fn list_for_author(
         db: &DatabaseConnection,
@@ -146,6 +154,7 @@ impl PostModel {
         Ok((posts, num_pages))
     }
 
+    /// Lists all non-deleted posts globally, ordered by score then recency.
     #[instrument(skip(db))]
     pub async fn list_all(
         db: &DatabaseConnection,
@@ -162,6 +171,7 @@ impl PostModel {
         Ok((posts, num_pages))
     }
 
+    /// Recalculates the score of a post by summing all vote values.
     #[instrument(skip(db))]
     pub async fn recalculate_score(
         db: &DatabaseConnection,
@@ -184,6 +194,7 @@ impl PostModel {
         Ok(score)
     }
 
+    /// Marks a post as deleted (soft delete — retains the row).
     #[instrument(skip(db))]
     pub async fn soft_delete(db: &DatabaseConnection, post_id: Uuid) -> Result<(), sea_orm::DbErr> {
         let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
@@ -197,6 +208,7 @@ impl PostModel {
         Ok(())
     }
 
+    /// Marks a post as removed by a moderator (soft removal).
     #[instrument(skip(db))]
     pub async fn soft_remove(db: &DatabaseConnection, post_id: Uuid) -> Result<(), sea_orm::DbErr> {
         let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
@@ -210,6 +222,7 @@ impl PostModel {
         Ok(())
     }
 
+    /// Toggles the pinned status of a post. Returns the new pinned value.
     #[instrument(skip(db))]
     pub async fn toggle_pin(
         db: &DatabaseConnection,
@@ -227,6 +240,7 @@ impl PostModel {
         Ok(new_pinned)
     }
 
+    /// Toggles the locked status of a post (disables new comments when locked).
     #[instrument(skip(db))]
     pub async fn toggle_lock(
         db: &DatabaseConnection,
@@ -244,6 +258,7 @@ impl PostModel {
         Ok(new_locked)
     }
 
+    /// Updates a post's title, body, and URL with validation.
     #[instrument(skip(db))]
     pub async fn update(
         db: &DatabaseConnection,
@@ -288,6 +303,7 @@ impl PostModel {
         Ok(post.update(db).await?)
     }
 
+    /// Atomically increments the comment count on a post.
     #[instrument(skip(db))]
     pub async fn increment_comment_count(
         db: &DatabaseConnection,

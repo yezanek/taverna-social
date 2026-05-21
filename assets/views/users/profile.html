@@ -6,13 +6,13 @@
     {% if profile_user.avatar_url %}
       <img src="{{ profile_user.avatar_url }}" alt="{{ display_name }}" style="width:80px;height:80px;border-radius:50%;object-fit:cover">
     {% else %}
-      <div style="width:80px;height:80px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:2rem;color:#fff">{{ avatar_letter | upper }}</div>
+      <div style="width:80px;height:80px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:2rem;color:var(--text-on-accent)">{{ avatar_letter | upper }}</div>
     {% endif %}
     <div style="flex:1">
       <h1 style="margin:0">{{ display_name }}</h1>
       <p style="color:var(--text-secondary);margin:0.25rem 0">@{{ profile_user.username }}@{{ domain }}</p>
       {% if profile_user.is_admin %}
-        <span style="display:inline-block;background:var(--accent);color:#fff;padding:0.1rem 0.5rem;border-radius:4px;font-size:0.75rem">Admin</span>
+        <span style="display:inline-block;background:var(--accent);color:var(--text-on-accent);padding:0.1rem 0.5rem;border-radius:4px;font-size:0.75rem">Admin</span>
       {% endif %}
     </div>
   </div>
@@ -26,6 +26,11 @@
     <span><strong>{{ following_count }}</strong> following</span>
   </div>
 
+  {% if current_user and current_user.id == profile_user.id %}
+    <div style="margin-top:0.75rem">
+      <a href="/u/{{ profile_user.username }}/new" class="btn" style="display:inline-block;padding:0.4rem 0.8rem;background:var(--accent);color:var(--text-on-accent);text-decoration:none;border-radius:4px;font-size:0.9rem">New Post</a>
+    </div>
+  {% endif %}
   {% if current_user and current_user.id != profile_user.id %}
     <div style="margin-top:0.75rem">
       {% include "partials/follow_button.html" %}
@@ -52,7 +57,7 @@
       {% for c in comments %}
         <div class="card" style="margin-bottom:0.5rem">
           <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.25rem">
-            Comment on <a href="/c/{{ c.post_community_slug | default(value=c.comment.post_id) }}/posts/{{ c.comment.post_id }}" style="color:var(--link)">{{ c.post_title }}</a>
+            Comment on <a href="{% if c.post_community_slug %}/c/{{ c.post_community_slug }}/posts/{{ c.comment.post_id }}{% else %}/posts/{{ c.comment.post_id }}{% endif %}" style="color:var(--link)">{{ c.post_title }}</a>
           </div>
           <div>{{ c.comment.body }}</div>
           <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem">{{ c.comment.published_at }}</div>

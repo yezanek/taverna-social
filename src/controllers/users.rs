@@ -22,12 +22,26 @@ use crate::views::helpers;
 
 const PER_PAGE: u64 = 20;
 
+/// Form data for creating a profile post.
+#[derive(Debug, Deserialize)]
+pub struct CreateProfilePostForm {
+    pub title: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
+}
+
+/// Form data for following/unfollowing a user.
 #[derive(Debug, Deserialize)]
 pub struct FollowForm {
     #[serde(default)]
     pub csrf_token: Option<String>,
 }
 
+/// Form data for updating user profile settings.
 #[derive(Debug, Deserialize)]
 pub struct SettingsForm {
     pub display_name: Option<String>,
@@ -38,6 +52,7 @@ pub struct SettingsForm {
     pub csrf_token: Option<String>,
 }
 
+/// Form data for changing a user's password.
 #[derive(Debug, Deserialize)]
 pub struct PasswordForm {
     pub current_password: String,
@@ -47,6 +62,7 @@ pub struct PasswordForm {
     pub csrf_token: Option<String>,
 }
 
+/// Shows a user's public profile with their posts and follower counts.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, current_user, jar, taverna, theme, render_mode))]
 pub async fn profile(
@@ -154,6 +170,7 @@ pub async fn profile(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Shows a user's profile filtered to the posts tab.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn profile_posts(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -231,6 +248,7 @@ pub async fn profile_posts(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Shows a user's profile filtered to the comments tab.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn profile_comments(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -308,6 +326,7 @@ pub async fn profile_comments(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Follows a user. Returns either an HTMX partial or a redirect.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, jar, headers, taverna))]
 pub async fn follow(
@@ -396,6 +415,7 @@ pub async fn follow(
         .into_response())
 }
 
+/// Unfollows a user. Returns either an HTMX partial or a redirect.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, jar, headers, taverna))]
 pub async fn unfollow(
@@ -486,6 +506,7 @@ pub async fn unfollow(
         .into_response())
 }
 
+/// Renders the user settings page.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn settings_form(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -520,6 +541,7 @@ pub async fn settings_form(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Updates user profile settings (display name, bio, avatar, email).
 #[instrument(skip(ctx, form, jar, headers, taverna))]
 pub async fn update_settings(
     State(ctx): State<AppContext>,
@@ -608,6 +630,7 @@ pub async fn update_settings(
     Ok(format::redirect("/settings").into_response())
 }
 
+/// Changes the current user's password.
 #[instrument(skip(ctx, form, jar, headers))]
 pub async fn change_password(
     State(ctx): State<AppContext>,
@@ -640,4 +663,125 @@ pub async fn change_password(
     })?;
 
     Ok(format::redirect("/settings").into_response())
+}
+
+/// Shows the form to create a new profile post.
+#[instrument(skip(v, ctx, theme, current_user, jar))]
+pub async fn profile_new_post(
+    ViewEngine(v): ViewEngine<TeraView>,
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(theme): Extension<CurrentTheme>,
+    Path(username): Path<String>,
+) -> Result<Response> {
+    let _user = UserModel::find_by_username(&ctx.db, &username)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if current_user.username != username {
+        return Err(Error::Unauthorized("Not authorized".to_string()));
+    }
+
+    let csrf_token = Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
+        .path("/")
+        .build();
+
+    let response = helpers::render_with_theme(
+        &v,
+        "users/new_post.html",
+        json!({
+            "current_user": current_user,
+            "csrf_token": csrf_token,
+            "username": username,
+        }),
+        &theme,
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
+}
+
+/// Creates a new profile post (not in a community) with federation support.
+#[instrument(skip(ctx, form, jar, headers, taverna))]
+pub async fn create_profile_post(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path(username): Path<String>,
+    Form(form): Form<CreateProfilePostForm>,
+) -> Result<Response> {
+    if current_user.username != username {
+        return Err(Error::Unauthorized("Not authorized".to_string()));
+    }
+
+    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let post = PostModel::create(
+        &ctx.db,
+        None,
+        current_user.id,
+        &form.title,
+        form.body.as_deref(),
+        form.url.as_deref(),
+        &taverna.base_url,
+    )
+    .await
+    .map_err(|_| Error::InternalServerError)?;
+
+    // Federation: enqueue Create activity to user followers
+    if taverna.federation.enabled {
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+
+        let note = serde_json::json!({
+            "@context": ap_context,
+            "id": post.ap_id,
+            "type": "Note",
+            "attributedTo": current_user.ap_id,
+            "content": post.body,
+            "name": post.title,
+            "published": post.published_at.to_rfc3339(),
+            "url": post.url,
+            "to": [current_user.followers_url],
+            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
+        });
+
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, Uuid::new_v4());
+        let create = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Create",
+            "actor": current_user.ap_id,
+            "object": note,
+            "to": [current_user.followers_url],
+            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+
+        let inboxes =
+            crate::workers::deliver_activity::get_user_follower_inboxes(&ctx.db, current_user.id)
+                .await
+                .unwrap_or_default();
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &create,
+                &current_user.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
+
+    Ok(format::redirect(&format!("/u/{}", username)).into_response())
 }

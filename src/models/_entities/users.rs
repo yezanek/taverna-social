@@ -13,6 +13,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable, unique)]
     pub email: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
+    #[serde(skip_serializing)]
     pub password_hash: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub display_name: Option<String>,
@@ -25,6 +26,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub public_key: String,
     #[sea_orm(column_type = "Text", nullable)]
+    #[serde(skip_serializing)]
     pub private_key: Option<String>,
     pub is_local: bool,
     pub is_admin: bool,

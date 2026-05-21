@@ -13,11 +13,13 @@ use crate::models::_entities::{communities, users};
 
 const WEBFINGER_CONTENT_TYPE: &str = "application/jrd+json";
 
+/// Query parameters for WebFinger requests.
 #[derive(Debug, Deserialize)]
 pub struct WebFingerQuery {
     pub resource: String,
 }
 
+/// WebFinger endpoint for discovering users and communities by acct: URI.
 #[instrument(skip(ctx, data))]
 pub async fn webfinger(
     State(ctx): State<AppContext>,

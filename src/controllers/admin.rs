@@ -15,12 +15,14 @@ use crate::models::communities::CommunityModel;
 use crate::models::users::UserModel;
 use crate::views::helpers;
 
+/// Generic admin action form (used for CSRF-protected POST actions).
 #[derive(Debug, Deserialize)]
 pub struct AdminForm {
     #[serde(default)]
     pub csrf_token: Option<String>,
 }
 
+/// Admin dashboard showing communities and users for moderation.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn dashboard(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -63,6 +65,7 @@ pub async fn dashboard(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Bans a user account (admin only).
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn ban_user(
     State(ctx): State<AppContext>,
@@ -101,6 +104,7 @@ pub async fn ban_user(
     Ok(format::redirect("/admin").into_response())
 }
 
+/// Unbans a user account (admin only).
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn unban_user(
     State(ctx): State<AppContext>,
@@ -131,6 +135,7 @@ pub async fn unban_user(
     Ok(format::redirect("/admin").into_response())
 }
 
+/// Soft-deletes a community (admin only).
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn delete_community(
     State(ctx): State<AppContext>,
@@ -154,7 +159,7 @@ pub async fn delete_community(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
-    crate::models::communities::CommunityModel::soft_delete(&ctx.db, community.id)
+    CommunityModel::soft_delete(&ctx.db, community.id)
         .await
         .map_err(|_| Error::InternalServerError)?;
 

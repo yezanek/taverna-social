@@ -8,6 +8,7 @@ use tracing::instrument;
 use crate::initializers::content_negotiation::RenderMode;
 use crate::models::_entities::{communities, follows, posts, users};
 
+/// Returns a user's ActivityPub actor object (Person type).
 #[instrument(skip(ctx))]
 pub async fn user_actor(
     State(ctx): State<AppContext>,
@@ -55,6 +56,7 @@ pub async fn user_actor(
     }
 }
 
+/// Returns a user's followers collection (OrderedCollection).
 #[instrument(skip(ctx))]
 pub async fn user_followers(
     State(ctx): State<AppContext>,
@@ -96,6 +98,7 @@ pub async fn user_followers(
     Ok(axum::Json(collection).into_response())
 }
 
+/// Returns who a user is following (OrderedCollection).
 #[instrument(skip(ctx))]
 pub async fn user_following(
     State(ctx): State<AppContext>,
@@ -140,6 +143,7 @@ pub async fn user_following(
     Ok(axum::Json(collection).into_response())
 }
 
+/// Returns a user's outbox (OrderedCollection of recent Create activities).
 #[instrument(skip(ctx))]
 pub async fn user_outbox(
     State(ctx): State<AppContext>,
@@ -189,6 +193,7 @@ pub async fn user_outbox(
     Ok(axum::Json(collection).into_response())
 }
 
+/// Returns a community's followers collection (OrderedCollection).
 #[instrument(skip(ctx))]
 pub async fn community_followers(
     State(ctx): State<AppContext>,
@@ -230,6 +235,7 @@ pub async fn community_followers(
     Ok(axum::Json(collection).into_response())
 }
 
+/// Returns a community's outbox (OrderedCollection of recent Announce activities).
 #[instrument(skip(ctx))]
 pub async fn community_outbox(
     State(ctx): State<AppContext>,

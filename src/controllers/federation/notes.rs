@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::models::_entities::{posts, users};
 use crate::models::comments::CommentModel;
 
+/// Returns a post as an ActivityPub Note object.
 #[instrument(skip(ctx))]
 pub async fn post_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -> Result<Response> {
     let post = posts::Entity::find_by_id(id)
@@ -42,6 +43,7 @@ pub async fn post_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -> R
     Ok(([(CONTENT_TYPE, FEDERATION_CONTENT_TYPE)], axum::Json(note)).into_response())
 }
 
+/// Returns a comment as an ActivityPub Note object with inReplyTo.
 #[instrument(skip(ctx))]
 pub async fn comment_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -> Result<Response> {
     let comment = CommentModel::find_by_id(&ctx.db, id)
