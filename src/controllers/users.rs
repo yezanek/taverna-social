@@ -613,10 +613,12 @@ pub async fn update_settings(
             "to": [current_user.followers_url],
             "published": chrono::Utc::now().to_rfc3339(),
         });
-        let inboxes =
-            crate::workers::deliver_activity::get_user_follower_inboxes(&ctx.db, current_user.id)
-                .await
-                .unwrap_or_default();
+        let inboxes = crate::workers::deliver_activity::get_user_follower_inboxes(
+            &ctx.db,
+            current_user.id,
+        )
+        .await
+        .map_err(|e| Error::string(&e.to_string()))?;
         if !inboxes.is_empty() {
             crate::workers::deliver_activity::enqueue_to_followers(
                 &ctx.db,
@@ -770,18 +772,21 @@ pub async fn create_profile_post(
             "published": chrono::Utc::now().to_rfc3339(),
         });
 
-        let inboxes =
-            crate::workers::deliver_activity::get_user_follower_inboxes(&ctx.db, current_user.id)
-                .await
-                .unwrap_or_default();
+        let inboxes = crate::workers::deliver_activity::get_user_follower_inboxes(
+            &ctx.db,
+            current_user.id,
+        )
+        .await
+        .map_err(|e| Error::string(&e.to_string()))?;
         if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+            crate::workers::deliver_activity::enqueue_to_followers(
                 &ctx.db,
                 &create,
                 &current_user.ap_id,
                 inboxes,
             )
-            .await;
+            .await
+            .map_err(|e| Error::string(&e.to_string()))?;
         }
     }
 
