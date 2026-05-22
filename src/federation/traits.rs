@@ -552,23 +552,35 @@ impl Object for DbComment {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Parent post not found: {}", in_reply_to))?;
 
+        // Check if in_reply_to points to another comment (vs. directly to the post)
+        let parent_comment = comments::Entity::find()
+            .filter(comments::Column::ApId.eq(in_reply_to.as_str()))
+            .one(db)
+            .await?;
+
         let author_ap_id = json.attributed_to.as_str();
         let author = crate::federation::activities::ensure_remote_user(db, author_ap_id).await?;
 
         let content = json.content.as_deref().unwrap_or("");
         let comment_id = uuid::Uuid::new_v4();
+        let comment_seg = format!("c{}", &comment_id.to_string().replace('-', "")[..8]);
+
+        let (parent_id, path) = if let Some(ref pc) = parent_comment {
+            let path = format!("{}.{}", pc.path, comment_seg);
+            (Set(Some(pc.id)), Set(path))
+        } else {
+            let post_seg = format!("c{}", &parent_post.id.to_string().replace('-', "")[..8]);
+            let path = format!("{}.{}", post_seg, comment_seg);
+            (Set(None), Set(path))
+        };
 
         let new_comment = comments::ActiveModel {
             id: Set(comment_id),
             ap_id: Set(id.to_string()),
             post_id: Set(parent_post.id),
             author_id: Set(author.id),
-            parent_id: Set(None),
-            path: Set(format!(
-                "c{}c{}",
-                &parent_post.id.to_string().replace('-', "")[..8],
-                &comment_id.to_string().replace('-', "")[..8]
-            )),
+            parent_id,
+            path,
             body: Set(content.to_string()),
             score: Set(0),
             is_deleted: Set(false),

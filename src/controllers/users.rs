@@ -528,12 +528,14 @@ pub async fn settings_form(
         .path("/")
         .build();
 
+    let user_email = user.email.clone();
     let response = helpers::render_with_theme(
         &v,
         "users/settings.html",
         json!({
             "current_user": current_user,
             "user": user,
+            "email": user_email,
             "csrf_token": csrf_token,
         }),
         &theme,

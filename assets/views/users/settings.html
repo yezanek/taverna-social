@@ -23,7 +23,7 @@
 
   <div style="margin-bottom:0.75rem">
     <label for="email" style="display:block;margin-bottom:0.25rem;font-weight:bold">Email</label>
-    <input type="email" id="email" name="email" value="{{ user.email | default(value='') }}" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+    <input type="email" id="email" name="email" value="{{ email | default(value='') }}" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
   </div>
 
   <button type="submit" class="btn">Save Settings</button>

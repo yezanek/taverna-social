@@ -11,6 +11,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text", unique)]
     pub username: String,
     #[sea_orm(column_type = "Text", nullable, unique)]
+    #[serde(skip_serializing)]
     pub email: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     #[serde(skip_serializing)]

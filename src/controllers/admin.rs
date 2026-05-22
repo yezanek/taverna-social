@@ -39,9 +39,21 @@ pub async fn dashboard(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    let (users, _) = UserModel::list_all(&ctx.db, 0, 50)
+    let (all_users, _) = UserModel::list_all(&ctx.db, 0, 50)
         .await
         .map_err(|_| Error::InternalServerError)?;
+
+    let users: Vec<serde_json::Value> = all_users
+        .into_iter()
+        .map(|u| {
+            json!({
+                "username": u.username,
+                "email": u.email,
+                "is_admin": u.is_admin,
+                "is_banned": u.is_banned,
+            })
+        })
+        .collect();
 
     let csrf_token = uuid::Uuid::new_v4().to_string();
     let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
