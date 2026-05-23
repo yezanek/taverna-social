@@ -7,11 +7,13 @@ use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
 
+/// Form containing the selected theme value.
 #[derive(Debug, Deserialize)]
 pub struct ThemeForm {
     pub theme: String,
 }
 
+/// Sets the user's theme preference via cookie (light/dark/sepia).
 #[instrument(skip(jar, _ctx))]
 pub async fn set_theme(
     jar: CookieJar,

@@ -88,4 +88,5 @@ impl Related<super::communities::Entity> for Entity {
     }
 }
 
+#[async_trait::async_trait]
 impl ActiveModelBehavior for ActiveModel {}

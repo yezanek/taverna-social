@@ -19,7 +19,6 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub public_key: String,
     #[sea_orm(column_type = "Text", nullable)]
-    #[serde(skip_serializing)]
     pub private_key: Option<String>,
     #[sea_orm(column_type = "Text")]
     pub inbox_url: String,
@@ -70,4 +69,12 @@ impl Related<super::users::Entity> for Entity {
     }
 }
 
-impl ActiveModelBehavior for ActiveModel {}
+#[async_trait::async_trait]
+impl ActiveModelBehavior for ActiveModel {
+    async fn before_save<C>(self, _db: &C, _insert: bool) -> std::result::Result<Self, DbErr>
+    where
+        C: ConnectionTrait,
+    {
+        Ok(self)
+    }
+}

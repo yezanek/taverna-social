@@ -4,9 +4,13 @@ use argon2::{
     Argon2,
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
 };
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Set,
+};
 use tracing::instrument;
 
+/// Errors that can occur during user operations.
 #[derive(Debug, thiserror::Error)]
 pub enum UserError {
     #[error("Invalid username: {0}")]
@@ -26,6 +30,7 @@ pub enum UserError {
 pub struct UserModel;
 
 impl UserModel {
+    /// Creates a new local user with hashed password, keypair, and AP IDs.
     #[instrument(skip(db, password))]
     pub async fn create_local(
         db: &DatabaseConnection,
@@ -105,6 +110,7 @@ impl UserModel {
         Ok(user)
     }
 
+    /// Finds a user by their email address.
     #[instrument(skip(db))]
     pub async fn find_by_email(
         db: &DatabaseConnection,
@@ -117,6 +123,7 @@ impl UserModel {
             .await
     }
 
+    /// Finds a user by their username (case-insensitive lookup).
     #[instrument(skip(db))]
     pub async fn find_by_username(
         db: &DatabaseConnection,
@@ -129,6 +136,7 @@ impl UserModel {
             .await
     }
 
+    /// Finds a user by their UUID primary key.
     #[instrument(skip(db))]
     pub async fn find_by_id(
         db: &DatabaseConnection,
@@ -140,6 +148,7 @@ impl UserModel {
             .await
     }
 
+    /// Finds a user by their ActivityPub ID.
     #[instrument(skip(db))]
     pub async fn find_by_ap_id(
         db: &DatabaseConnection,
@@ -151,11 +160,176 @@ impl UserModel {
             .await
     }
 
+    /// Generates an RSA keypair for ActivityPub HTTP signatures.
     pub fn generate_keypair() -> Result<(String, String), anyhow::Error> {
         let keypair = generate_actor_keypair()?;
         Ok((keypair.public_key, keypair.private_key))
     }
 
+    /// Updates a user's display name, bio, and avatar URL.
+    #[instrument(skip(db))]
+    pub async fn update_profile(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+        display_name: Option<&str>,
+        bio: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<users::Model, UserError> {
+        let user = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or(UserError::Validation("User not found".to_string()))?;
+
+        let mut active: users::ActiveModel = user.into();
+        if let Some(name) = display_name {
+            let name = name.trim();
+            active.display_name = Set(if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            });
+        }
+        if let Some(b) = bio {
+            let b = b.trim();
+            active.bio = Set(if b.is_empty() {
+                None
+            } else {
+                Some(b.to_string())
+            });
+        }
+        if let Some(url) = avatar_url {
+            let url = url.trim();
+            if !url.is_empty() {
+                let parsed = url::Url::parse(url)
+                    .map_err(|_| UserError::Validation("Invalid avatar URL".to_string()))?;
+                if parsed.scheme() != "https" {
+                    return Err(UserError::Validation(
+                        "Avatar URL must use HTTPS".to_string(),
+                    ));
+                }
+            }
+            active.avatar_url = Set(if url.is_empty() {
+                None
+            } else {
+                Some(url.to_string())
+            });
+        }
+        active.updated_at = Set(chrono::Utc::now().into());
+        let result = active.update(db).await?;
+        Ok(result)
+    }
+
+    /// Updates a user's email address, checking for duplicates.
+    #[instrument(skip(db))]
+    pub async fn update_email(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+        email: &str,
+    ) -> Result<(), UserError> {
+        let email = email.trim().to_lowercase();
+        if !email.contains('@') {
+            return Err(UserError::Validation("Invalid email".to_string()));
+        }
+
+        let existing = Self::find_by_email(db, &email).await?;
+        if let Some(other) = existing
+            && other.id != user_id
+        {
+            return Err(UserError::EmailTaken);
+        }
+
+        let mut user: users::ActiveModel = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or(UserError::Validation("User not found".to_string()))?
+            .into();
+        user.email = Set(Some(email.to_string()));
+        user.updated_at = Set(chrono::Utc::now().into());
+        user.update(db).await?;
+        Ok(())
+    }
+
+    /// Changes a user's password after verifying the current password.
+    #[instrument(skip(db))]
+    pub async fn change_password(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+        current_password: &str,
+        new_password: &str,
+    ) -> Result<(), UserError> {
+        let user = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or(UserError::Validation("User not found".to_string()))?;
+
+        if !Self::verify_password(&user, current_password).await {
+            return Err(UserError::Validation(
+                "Current password is incorrect".to_string(),
+            ));
+        }
+
+        if new_password.len() < 8 {
+            return Err(UserError::Validation(
+                "New password must be at least 8 characters".to_string(),
+            ));
+        }
+
+        let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
+        let password = new_password.to_string();
+        let password_hash = tokio::task::spawn_blocking(move || {
+            Argon2::default()
+                .hash_password(password.as_bytes(), &salt)
+                .map_err(|e| UserError::Other(anyhow::anyhow!("Password hashing failed: {}", e)))
+                .map(|h| h.to_string())
+        })
+        .await
+        .map_err(|e| UserError::Other(anyhow::anyhow!("Blocking task failed: {}", e)))??;
+
+        let mut active: users::ActiveModel = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or(UserError::Validation("User not found".to_string()))?
+            .into();
+        active.password_hash = Set(Some(password_hash));
+        active.updated_at = Set(chrono::Utc::now().into());
+        active.update(db).await?;
+        Ok(())
+    }
+
+    /// Sets or clears the banned flag on a user account.
+    #[instrument(skip(db))]
+    pub async fn set_banned(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+        banned: bool,
+    ) -> Result<(), UserError> {
+        let mut user: users::ActiveModel = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or(UserError::Validation("User not found".to_string()))?
+            .into();
+        user.is_banned = Set(banned);
+        user.updated_at = Set(chrono::Utc::now().into());
+        user.update(db).await?;
+        Ok(())
+    }
+
+    /// Lists all users with pagination, ordered by username.
+    #[instrument(skip(db))]
+    pub async fn list_all(
+        db: &DatabaseConnection,
+        page: u64,
+        per_page: u64,
+    ) -> Result<(Vec<users::Model>, u64), sea_orm::DbErr> {
+        let paginator = users::Entity::find()
+            .order_by_asc(users::Column::Username)
+            .paginate(db, per_page);
+        let num_pages = paginator.num_pages().await?;
+        let users = paginator.fetch_page(page).await?;
+        Ok((users, num_pages))
+    }
+
+    /// Verifies a plaintext password against the stored argon2 hash.
     pub async fn verify_password(model: &users::Model, password: &str) -> bool {
         let password_hash = match &model.password_hash {
             Some(h) => h.clone(),

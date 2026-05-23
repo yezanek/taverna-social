@@ -1,4 +1,5 @@
 use crate::models::_entities::{posts, posts::ActiveModel, votes};
+use crate::models::community_bans::Entity as CommunityBans;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, Set,
@@ -7,12 +8,15 @@ use tracing::instrument;
 use url::Url;
 use uuid::Uuid;
 
+/// Errors that can occur during post operations.
 #[derive(Debug, thiserror::Error)]
 pub enum PostError {
     #[error("Validation error: {0}")]
     Validation(String),
     #[error("Not found")]
     NotFound,
+    #[error("You are banned from this community")]
+    Banned,
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
     #[error(transparent)]
@@ -22,6 +26,9 @@ pub enum PostError {
 pub struct PostModel;
 
 impl PostModel {
+    /// Creates a new post, optionally within a community.
+    /// Validates title length, ensures body or URL is present, and checks
+    /// that the author is not banned from the target community.
     #[instrument(skip(db))]
     pub async fn create(
         db: &DatabaseConnection,
@@ -56,6 +63,13 @@ impl PostModel {
             ));
         }
 
+        if let Some(cid) = community_id {
+            let banned = CommunityBans::is_banned(db, cid, author_id).await?;
+            if banned {
+                return Err(PostError::Banned);
+            }
+        }
+
         let id = Uuid::new_v4();
         let base = base_url.trim_end_matches('/');
         let ap_id = format!("{}/posts/{}", base, id);
@@ -82,6 +96,7 @@ impl PostModel {
         Ok(post.insert(db).await?)
     }
 
+    /// Finds a post by its UUID primary key.
     #[instrument(skip(db))]
     pub async fn find_by_id(
         db: &DatabaseConnection,
@@ -90,6 +105,7 @@ impl PostModel {
         posts::Entity::find_by_id(id).one(db).await
     }
 
+    /// Finds a post by its ActivityPub ID.
     #[instrument(skip(db))]
     pub async fn find_by_ap_id(
         db: &DatabaseConnection,
@@ -101,6 +117,7 @@ impl PostModel {
             .await
     }
 
+    /// Lists non-deleted posts in a community, ordered by score then recency.
     #[instrument(skip(db))]
     pub async fn list_for_community(
         db: &DatabaseConnection,
@@ -119,6 +136,25 @@ impl PostModel {
         Ok((posts, num_pages))
     }
 
+    /// Lists non-deleted posts by a specific author, ordered by recency.
+    #[instrument(skip(db))]
+    pub async fn list_for_author(
+        db: &DatabaseConnection,
+        author_id: Uuid,
+        page: u64,
+        per_page: u64,
+    ) -> Result<(Vec<posts::Model>, u64), sea_orm::DbErr> {
+        let paginator = posts::Entity::find()
+            .filter(posts::Column::AuthorId.eq(author_id))
+            .filter(posts::Column::IsDeleted.eq(false))
+            .order_by_desc(posts::Column::PublishedAt)
+            .paginate(db, per_page);
+        let num_pages = paginator.num_pages().await?;
+        let posts = paginator.fetch_page(page).await?;
+        Ok((posts, num_pages))
+    }
+
+    /// Lists all non-deleted posts globally, ordered by score then recency.
     #[instrument(skip(db))]
     pub async fn list_all(
         db: &DatabaseConnection,
@@ -135,6 +171,7 @@ impl PostModel {
         Ok((posts, num_pages))
     }
 
+    /// Recalculates the score of a post by summing all vote values.
     #[instrument(skip(db))]
     pub async fn recalculate_score(
         db: &DatabaseConnection,
@@ -157,6 +194,7 @@ impl PostModel {
         Ok(score)
     }
 
+    /// Marks a post as deleted (soft delete — retains the row).
     #[instrument(skip(db))]
     pub async fn soft_delete(db: &DatabaseConnection, post_id: Uuid) -> Result<(), sea_orm::DbErr> {
         let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
@@ -170,6 +208,7 @@ impl PostModel {
         Ok(())
     }
 
+    /// Marks a post as removed by a moderator (soft removal).
     #[instrument(skip(db))]
     pub async fn soft_remove(db: &DatabaseConnection, post_id: Uuid) -> Result<(), sea_orm::DbErr> {
         let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
@@ -183,6 +222,88 @@ impl PostModel {
         Ok(())
     }
 
+    /// Toggles the pinned status of a post. Returns the new pinned value.
+    #[instrument(skip(db))]
+    pub async fn toggle_pin(
+        db: &DatabaseConnection,
+        post_id: Uuid,
+    ) -> Result<bool, sea_orm::DbErr> {
+        let post: posts::Model = posts::Entity::find_by_id(post_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?;
+        let mut active: posts::ActiveModel = post.into();
+        let new_pinned = !active.is_pinned.take().unwrap_or(false);
+        active.is_pinned = Set(new_pinned);
+        active.updated_at = Set(chrono::Utc::now().into());
+        active.update(db).await?;
+        Ok(new_pinned)
+    }
+
+    /// Toggles the locked status of a post (disables new comments when locked).
+    #[instrument(skip(db))]
+    pub async fn toggle_lock(
+        db: &DatabaseConnection,
+        post_id: Uuid,
+    ) -> Result<bool, sea_orm::DbErr> {
+        let post: posts::Model = posts::Entity::find_by_id(post_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?;
+        let mut active: posts::ActiveModel = post.into();
+        let new_locked = !active.is_locked.take().unwrap_or(false);
+        active.is_locked = Set(new_locked);
+        active.updated_at = Set(chrono::Utc::now().into());
+        active.update(db).await?;
+        Ok(new_locked)
+    }
+
+    /// Updates a post's title, body, and URL with validation.
+    #[instrument(skip(db))]
+    pub async fn update(
+        db: &DatabaseConnection,
+        post_id: Uuid,
+        title: &str,
+        body: Option<&str>,
+        url: Option<&str>,
+    ) -> Result<posts::Model, PostError> {
+        let title = title.trim();
+        if title.is_empty() || title.len() > 300 {
+            return Err(PostError::Validation(
+                "Title must be 1-300 characters".to_string(),
+            ));
+        }
+        let body_effective = body.map(|s| s.trim()).filter(|s| !s.is_empty());
+        let url_effective = url.map(|s| s.trim()).filter(|s| !s.is_empty());
+        if let Some(u) = &url_effective {
+            let parsed = Url::parse(u)
+                .map_err(|_| PostError::Validation("Invalid URL format".to_string()))?;
+            let scheme = parsed.scheme();
+            if scheme != "http" && scheme != "https" {
+                return Err(PostError::Validation(
+                    "URL must use http or https scheme".to_string(),
+                ));
+            }
+        }
+        if body_effective.is_none() && url_effective.is_none() {
+            return Err(PostError::Validation(
+                "Post must have body or URL".to_string(),
+            ));
+        }
+
+        let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
+            .one(db)
+            .await?
+            .ok_or(PostError::NotFound)?
+            .into();
+        post.title = Set(title.to_string());
+        post.body = Set(body_effective.map(|s| s.to_string()));
+        post.url = Set(url_effective.map(|s| s.to_string()));
+        post.updated_at = Set(chrono::Utc::now().into());
+        Ok(post.update(db).await?)
+    }
+
+    /// Atomically increments the comment count on a post.
     #[instrument(skip(db))]
     pub async fn increment_comment_count(
         db: &DatabaseConnection,

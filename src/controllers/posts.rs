@@ -15,11 +15,25 @@ use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::comments::CommentModel;
 use crate::models::communities::CommunityModel;
+use crate::models::community_bans::Entity as CommunityBansEntity;
 use crate::models::posts::PostModel;
 use crate::models::users::UserModel;
 use crate::models::votes::VoteModel;
 use crate::views::helpers;
 
+/// Form data for editing a post.
+#[derive(Debug, Deserialize)]
+pub struct EditPostForm {
+    pub title: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
+}
+
+/// Form data for casting a vote (upvote/downvote).
 #[derive(Debug, Deserialize)]
 pub struct VoteForm {
     pub vote: i16,
@@ -27,6 +41,7 @@ pub struct VoteForm {
     pub csrf_token: Option<String>,
 }
 
+/// Form data for creating a comment.
 #[derive(Debug, Deserialize)]
 pub struct CommentForm {
     pub body: String,
@@ -36,6 +51,15 @@ pub struct CommentForm {
     pub csrf_token: Option<String>,
 }
 
+/// Form data for editing a comment.
+#[derive(Debug, Deserialize)]
+pub struct EditCommentForm {
+    pub body: String,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
+}
+
+/// Shows a single post with its comments, author info, and voting UI.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn detail(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -148,6 +172,7 @@ pub async fn detail(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Casts or toggles a vote on a post (upvote/downvote). Returns vote button partial.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, jar, headers, taverna, form))]
 pub async fn vote(
@@ -187,6 +212,54 @@ pub async fn vote(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
+    // Federation: enqueue Like/Dislike activity
+    if taverna.federation.enabled {
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let vote_activity = if form.vote > 0 {
+            serde_json::json!({
+                "@context": ap_context,
+                "id": activity_id,
+                "type": "Like",
+                "actor": current_user.ap_id,
+                "object": post.ap_id,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "published": chrono::Utc::now().to_rfc3339(),
+            })
+        } else {
+            serde_json::json!({
+                "@context": ap_context,
+                "id": activity_id,
+                "type": "Dislike",
+                "actor": current_user.ap_id,
+                "object": post.ap_id,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "published": chrono::Utc::now().to_rfc3339(),
+            })
+        };
+        let post_author = UserModel::find_by_id(&ctx.db, post.author_id)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+            .ok_or_else(|| Error::InternalServerError)?;
+        let inboxes = if post_author.is_local {
+            Vec::new()
+        } else {
+            vec![post_author.inbox_url.clone()]
+        };
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &vote_activity,
+                &current_user.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
+
     let user_vote = VoteModel::get_user_vote_on_post(&ctx.db, current_user.id, post_id)
         .await
         .map_err(|_| Error::InternalServerError)?;
@@ -215,6 +288,152 @@ pub async fn vote(
     )
 }
 
+/// Renders the edit form for a post (author only).
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(v, ctx, theme, current_user, jar))]
+pub async fn edit_form(
+    ViewEngine(v): ViewEngine<TeraView>,
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(theme): Extension<CurrentTheme>,
+    Path((slug, post_id)): Path<(String, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
+    if post.author_id != current_user.id {
+        return Err(Error::Unauthorized("Not authorized".to_string()));
+    }
+
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
+        .path("/")
+        .build();
+
+    let response = helpers::render_with_theme(
+        &v,
+        "communities/edit_post.html",
+        json!({
+            "current_user": current_user,
+            "community": community,
+            "post": post,
+            "csrf_token": csrf_token,
+        }),
+        &theme,
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
+}
+
+/// Updates a post (author only). Enqueues AP Update activity.
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(ctx, form, jar, headers, taverna))]
+pub async fn update_post(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id)): Path<(String, Uuid)>,
+    Form(form): Form<EditPostForm>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
+    if post.author_id != current_user.id {
+        return Err(Error::Unauthorized("Not authorized".to_string()));
+    }
+
+    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let updated = PostModel::update(
+        &ctx.db,
+        post_id,
+        &form.title,
+        form.body.as_deref(),
+        form.url.as_deref(),
+    )
+    .await
+    .map_err(|_| Error::InternalServerError)?;
+
+    // Federation: enqueue Update{Note} activity
+    if taverna.federation.enabled {
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let note = serde_json::json!({
+            "@context": ap_context,
+            "id": updated.ap_id,
+            "type": "Note",
+            "attributedTo": community.ap_id,
+            "content": updated.body,
+            "name": updated.title,
+            "published": updated.published_at.to_rfc3339(),
+            "url": updated.url,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [community.followers_url],
+        });
+        let update = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Update",
+            "actor": current_user.ap_id,
+            "object": note,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [community.followers_url],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+
+        let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+            &ctx.db,
+            community.id,
+        )
+        .await
+        .unwrap_or_default();
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &update,
+                &current_user.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
+
+    Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
+}
+
+/// Soft-deletes a post (author, moderator, or admin). Enqueues AP Delete activity.
 #[instrument(skip(ctx, jar, headers, taverna))]
 pub async fn delete(
     State(ctx): State<AppContext>,
@@ -238,7 +457,13 @@ pub async fn delete(
         return Err(Error::NotFound);
     }
 
-    if post.author_id != current_user.id && !current_user.is_admin {
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    let is_mod = role.as_deref() == Some("moderator");
+
+    if post.author_id != current_user.id && !is_mod && !current_user.is_admin {
         return Err(Error::Unauthorized("Not authorized".to_string()));
     }
 
@@ -250,9 +475,45 @@ pub async fn delete(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
+    // Federation: enqueue Delete activity
+    if taverna.federation.enabled {
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let delete = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Delete",
+            "actor": current_user.ap_id,
+            "object": post.ap_id,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(community_id) = post.community_id {
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+                &ctx.db,
+                community_id,
+            )
+            .await
+            .unwrap_or_default();
+            if !inboxes.is_empty() {
+                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                    &ctx.db,
+                    &delete,
+                    &current_user.ap_id,
+                    inboxes,
+                )
+                .await;
+            }
+        }
+    }
+
     Ok(format::redirect(&format!("/c/{}", slug)).into_response())
 }
 
+/// Creates a comment on a post with federation support.
 #[instrument(skip(ctx, form, jar, headers, taverna))]
 pub async fn create_comment(
     State(ctx): State<AppContext>,
@@ -277,11 +538,29 @@ pub async fn create_comment(
         return Err(Error::NotFound);
     }
 
+    if post.is_locked {
+        return Err(Error::CustomError(
+            axum::http::StatusCode::FORBIDDEN,
+            loco_rs::controller::ErrorDetail::with_reason("Post is locked"),
+        ));
+    }
+
+    if let Some(community_id) = post.community_id
+        && CommunityBansEntity::is_banned(&ctx.db, community_id, current_user.id)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+    {
+        return Err(Error::CustomError(
+            axum::http::StatusCode::FORBIDDEN,
+            loco_rs::controller::ErrorDetail::with_reason("You are banned from this community"),
+        ));
+    }
+
     if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
-    CommentModel::create(
+    let comment = CommentModel::create(
         &ctx.db,
         post_id,
         current_user.id,
@@ -296,9 +575,58 @@ pub async fn create_comment(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
+    // Federation: enqueue Create activity for comment
+    if taverna.federation.enabled {
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let note = serde_json::json!({
+            "@context": ap_context,
+            "id": comment.ap_id,
+            "type": "Note",
+            "attributedTo": current_user.ap_id,
+            "content": comment.body,
+            "inReplyTo": post.ap_id,
+            "published": comment.published_at.to_rfc3339(),
+            "url": comment.ap_id,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [],
+        });
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let create = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Create",
+            "actor": current_user.ap_id,
+            "object": note,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(community_id) = post.community_id {
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+                &ctx.db,
+                community_id,
+            )
+            .await
+            .unwrap_or_default();
+            if !inboxes.is_empty() {
+                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                    &ctx.db,
+                    &create,
+                    &current_user.ap_id,
+                    inboxes,
+                )
+                .await;
+            }
+        }
+    }
+
     Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
 }
 
+/// Casts or toggles a vote on a comment. Returns vote button partial.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, jar, headers, taverna, form))]
 pub async fn vote_comment(
@@ -338,6 +666,54 @@ pub async fn vote_comment(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
+    // Federation: enqueue Like/Dislike activity for comment
+    if taverna.federation.enabled {
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let vote_activity = if form.vote > 0 {
+            serde_json::json!({
+                "@context": ap_context,
+                "id": activity_id,
+                "type": "Like",
+                "actor": current_user.ap_id,
+                "object": comment.ap_id,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "published": chrono::Utc::now().to_rfc3339(),
+            })
+        } else {
+            serde_json::json!({
+                "@context": ap_context,
+                "id": activity_id,
+                "type": "Dislike",
+                "actor": current_user.ap_id,
+                "object": comment.ap_id,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "published": chrono::Utc::now().to_rfc3339(),
+            })
+        };
+        let comment_author = UserModel::find_by_id(&ctx.db, comment.author_id)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+            .ok_or_else(|| Error::InternalServerError)?;
+        let inboxes = if !comment_author.is_local {
+            vec![comment_author.inbox_url.clone()]
+        } else {
+            Vec::new()
+        };
+        if !inboxes.is_empty() {
+            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                &ctx.db,
+                &vote_activity,
+                &current_user.ap_id,
+                inboxes,
+            )
+            .await;
+        }
+    }
+
     let user_vote = VoteModel::get_user_vote_on_comment(&ctx.db, current_user.id, comment_id)
         .await
         .map_err(|_| Error::InternalServerError)?;
@@ -364,4 +740,380 @@ pub async fn vote_comment(
             "csrf_token": form.csrf_token,
         }),
     )
+}
+
+/// Removes a post (moderator or admin only).
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn remove(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id)): Path<(String, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
+    PostModel::soft_remove(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}", slug)).into_response())
+}
+
+/// Toggles a post's pinned status (moderator or admin only).
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn pin(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id)): Path<(String, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
+    PostModel::toggle_pin(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
+}
+
+/// Toggles a post's locked status (moderator or admin only).
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn lock(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id)): Path<(String, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
+    PostModel::toggle_lock(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
+}
+
+/// Renders the edit form for a comment (author only).
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(v, ctx, theme, current_user, jar))]
+pub async fn edit_comment_form(
+    ViewEngine(v): ViewEngine<TeraView>,
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(theme): Extension<CurrentTheme>,
+    Path((slug, post_id, comment_id)): Path<(String, Uuid, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
+    let comment = CommentModel::find_by_id(&ctx.db, comment_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if comment.post_id != post_id {
+        return Err(Error::NotFound);
+    }
+
+    if comment.author_id != current_user.id {
+        return Err(Error::Unauthorized("Not authorized".to_string()));
+    }
+
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
+        .path("/")
+        .build();
+
+    let response = helpers::render_with_theme(
+        &v,
+        "communities/edit_comment.html",
+        json!({
+            "current_user": current_user,
+            "community": community,
+            "post": post,
+            "comment": comment,
+            "csrf_token": csrf_token,
+        }),
+        &theme,
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
+}
+
+/// Updates a comment body (author only). Enqueues AP Update activity.
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(ctx, form, jar, headers, taverna))]
+pub async fn update_comment(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id, comment_id)): Path<(String, Uuid, Uuid)>,
+    Form(form): Form<EditCommentForm>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
+    let comment = CommentModel::find_by_id(&ctx.db, comment_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if comment.post_id != post_id {
+        return Err(Error::NotFound);
+    }
+
+    if comment.author_id != current_user.id {
+        return Err(Error::Unauthorized("Not authorized".to_string()));
+    }
+
+    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let updated = CommentModel::update(&ctx.db, comment_id, &form.body)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    // Federation: enqueue Update{Note} activity
+    if taverna.federation.enabled {
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let note = serde_json::json!({
+            "@context": ap_context,
+            "id": updated.ap_id,
+            "type": "Note",
+            "attributedTo": current_user.ap_id,
+            "content": updated.body,
+            "inReplyTo": post.ap_id,
+            "published": updated.published_at.to_rfc3339(),
+            "url": updated.ap_id,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [],
+        });
+        let update = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Update",
+            "actor": current_user.ap_id,
+            "object": note,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(community_id) = post.community_id {
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+                &ctx.db,
+                community_id,
+            )
+            .await
+            .unwrap_or_default();
+            if !inboxes.is_empty() {
+                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                    &ctx.db,
+                    &update,
+                    &current_user.ap_id,
+                    inboxes,
+                )
+                .await;
+            }
+        }
+    }
+
+    Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
+}
+
+/// Removes a comment (moderator or admin only).
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn remove_comment(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Path((slug, post_id, comment_id)): Path<(String, Uuid, Uuid)>,
+) -> Result<Response> {
+    let community = CommunityModel::find_by_slug(&ctx.db, &slug)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if role.as_deref() != Some("moderator") && !current_user.is_admin {
+        return Err(Error::Unauthorized("Moderator access required".to_string()));
+    }
+
+    if !validate_csrf(&jar, None, &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let post = PostModel::find_by_id(&ctx.db, post_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if post.community_id != Some(community.id) {
+        return Err(Error::NotFound);
+    }
+
+    let comment = CommentModel::find_by_id(&ctx.db, comment_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if comment.post_id != post_id {
+        return Err(Error::NotFound);
+    }
+
+    CommentModel::soft_delete(&ctx.db, comment_id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    // Federation: enqueue Delete activity for comment
+    if taverna.federation.enabled {
+        let ap_context: &[&str] = &[
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ];
+        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
+        let delete = serde_json::json!({
+            "@context": ap_context,
+            "id": activity_id,
+            "type": "Delete",
+            "actor": current_user.ap_id,
+            "object": comment.ap_id,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(community_id) = post.community_id {
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+                &ctx.db,
+                community_id,
+            )
+            .await
+            .unwrap_or_default();
+            if !inboxes.is_empty() {
+                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                    &ctx.db,
+                    &delete,
+                    &current_user.ap_id,
+                    inboxes,
+                )
+                .await;
+            }
+        }
+    }
+
+    Ok(format::redirect(&format!("/c/{}/posts/{}", slug, post_id)).into_response())
 }

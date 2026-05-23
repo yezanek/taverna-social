@@ -9,7 +9,7 @@ pub async fn theme_middleware(mut req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-fn extract_theme(headers: &HeaderMap) -> Option<String> {
+pub fn extract_theme(headers: &HeaderMap) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();

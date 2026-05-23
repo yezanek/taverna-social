@@ -2,7 +2,7 @@
 
 [package]
 name = "taverna"
-version = "0.1.4"
+version = "0.0.6"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 authors = ["yezanek"]
@@ -28,6 +28,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 jsonwebtoken = "9"
 activitypub_federation = { version = "0.7.0-beta.11", features = ["axum"] }
+futures = "0.3"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tera = "1"
 pulldown-cmark = "0.11"
@@ -35,6 +36,8 @@ ammonia = "4"
 url = "2"
 argon2 = "0.5"
 tower = "0.4"
+tower_governor = { version = "0.8", features = ["axum"] }
+governor = "0.10"
 tracing = "0.1"
 anyhow = "1"
 time = "0.3"

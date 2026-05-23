@@ -11,6 +11,7 @@ use crate::views::helpers;
 
 const PER_PAGE: u64 = 20;
 
+/// Renders the front page with all non-deleted posts.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn index(
     ViewEngine(v): ViewEngine<TeraView>,

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use uuid::Uuid;
 
+/// Describes the result of a vote operation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum VoteAction {
     Added,
@@ -14,6 +15,49 @@ pub enum VoteAction {
 pub struct VoteModel;
 
 impl VoteModel {
+    /// Deletes a user's vote on a post or comment.
+    #[instrument(skip(db))]
+    pub async fn delete_vote(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+        post_id: Option<Uuid>,
+        comment_id: Option<Uuid>,
+    ) -> Result<(), sea_orm::DbErr> {
+        if post_id.is_some() == comment_id.is_some() {
+            return Err(sea_orm::DbErr::Custom(
+                "Exactly one of post_id or comment_id must be set".to_string(),
+            ));
+        }
+
+        let existing = if let Some(pid) = post_id {
+            votes::Entity::find()
+                .filter(votes::Column::UserId.eq(user_id))
+                .filter(votes::Column::PostId.eq(pid))
+                .one(db)
+                .await?
+        } else {
+            let cid = comment_id.ok_or_else(|| {
+                sea_orm::DbErr::Custom(
+                    "Exactly one of post_id or comment_id must be set".to_string(),
+                )
+            })?;
+            votes::Entity::find()
+                .filter(votes::Column::UserId.eq(user_id))
+                .filter(votes::Column::CommentId.eq(cid))
+                .one(db)
+                .await?
+        };
+
+        if let Some(vote) = existing {
+            votes::Entity::delete_by_id(vote.id).exec(db).await?;
+            Self::recalculate_after_vote(db, post_id, comment_id).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Casts or toggles a vote (upvote/downvote) on a post or comment.
+    /// Returns whether the vote was Added, Changed, or Removed.
     #[instrument(skip(db))]
     pub async fn cast_vote(
         db: &DatabaseConnection,
@@ -38,7 +82,11 @@ impl VoteModel {
                 .one(db)
                 .await?
         } else {
-            let cid = comment_id.unwrap();
+            let cid = comment_id.ok_or_else(|| {
+                sea_orm::DbErr::Custom(
+                    "Exactly one of post_id or comment_id must be set".to_string(),
+                )
+            })?;
             votes::Entity::find()
                 .filter(votes::Column::UserId.eq(user_id))
                 .filter(votes::Column::CommentId.eq(cid))
@@ -90,6 +138,7 @@ impl VoteModel {
         Ok(())
     }
 
+    /// Returns the current user's vote value on a post, if any.
     #[instrument(skip(db))]
     pub async fn get_user_vote_on_post(
         db: &DatabaseConnection,
@@ -104,6 +153,7 @@ impl VoteModel {
             .map(|v| v.map(|v| v.value))
     }
 
+    /// Returns the current user's vote value on a comment, if any.
     #[instrument(skip(db))]
     pub async fn get_user_vote_on_comment(
         db: &DatabaseConnection,

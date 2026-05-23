@@ -7,6 +7,7 @@ use sea_orm::{
 use tracing::instrument;
 use uuid::Uuid;
 
+/// Errors that can occur during community operations.
 #[derive(Debug, thiserror::Error)]
 pub enum CommunityError {
     #[error("Validation error: {0}")]
@@ -32,6 +33,7 @@ impl From<activitypub_federation::error::Error> for CommunityError {
 pub struct CommunityModel;
 
 impl CommunityModel {
+    /// Creates a new community with the creator as the initial moderator.
     #[instrument(skip(db))]
     pub async fn create(
         db: &DatabaseConnection,
@@ -101,6 +103,7 @@ impl CommunityModel {
         Ok(community)
     }
 
+    /// Finds a community by its URL slug (case-insensitive).
     #[instrument(skip(db))]
     pub async fn find_by_slug(
         db: &DatabaseConnection,
@@ -112,6 +115,7 @@ impl CommunityModel {
             .await
     }
 
+    /// Finds a community by its ActivityPub ID.
     #[instrument(skip(db))]
     pub async fn find_by_ap_id(
         db: &DatabaseConnection,
@@ -123,6 +127,7 @@ impl CommunityModel {
             .await
     }
 
+    /// Lists all communities with pagination, ordered by slug.
     #[instrument(skip(db))]
     pub async fn list_all(
         db: &DatabaseConnection,
@@ -137,6 +142,7 @@ impl CommunityModel {
         Ok((communities, num_pages))
     }
 
+    /// Returns the role of a user in a community, if they are a member.
     #[instrument(skip(db))]
     pub async fn get_member_role(
         db: &DatabaseConnection,
@@ -151,6 +157,7 @@ impl CommunityModel {
             .map(|m| m.map(|m| m.role))
     }
 
+    /// Adds a user as a member of a community with the given role.
     #[instrument(skip(db))]
     pub async fn add_member(
         db: &DatabaseConnection,
@@ -169,6 +176,7 @@ impl CommunityModel {
         Ok(())
     }
 
+    /// Removes a user from a community's member list.
     #[instrument(skip(db))]
     pub async fn remove_member(
         db: &DatabaseConnection,
@@ -183,9 +191,32 @@ impl CommunityModel {
         Ok(())
     }
 
+    /// Soft-deletes a community by clearing its name and description.
+    #[instrument(skip(db))]
+    pub async fn soft_delete(
+        db: &DatabaseConnection,
+        community_id: Uuid,
+    ) -> Result<(), sea_orm::DbErr> {
+        let mut community: communities::ActiveModel = communities::Entity::find_by_id(community_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound(
+                "Community not found".to_string(),
+            ))?
+            .into();
+        community.name = Set("[deleted]".to_string());
+        community.description = Set(Some(
+            "[This community has been deleted by an admin]".to_string(),
+        ));
+        community.updated_at = Set(chrono::Utc::now().into());
+        community.update(db).await?;
+        Ok(())
+    }
+
     const MAX_NAME_LEN: usize = 100;
     const MAX_DESCRIPTION_LEN: usize = 5000;
 
+    /// Updates community settings (name, description, NSFW, posting restrictions).
     #[instrument(skip(db))]
     pub async fn update_settings(
         db: &DatabaseConnection,
