@@ -2,6 +2,7 @@
 {% block title %}Admin Dashboard - Taverna{% endblock %}
 {% block content %}
 <h1>Admin Dashboard</h1>
+<p><a href="/admin/settings" style="color:var(--link)">Instance Settings</a></p>
 
 <h2>Users</h2>
 {% if users %}
@@ -12,6 +13,9 @@
         <th style="padding:0.5rem">Email</th>
         <th style="padding:0.5rem">Admin</th>
         <th style="padding:0.5rem">Banned</th>
+        <th style="padding:0.5rem">Verified</th>
+        <th style="padding:0.5rem">Score</th>
+        <th style="padding:0.5rem">Suspended</th>
         <th style="padding:0.5rem">Actions</th>
       </tr>
     </thead>
@@ -22,6 +26,9 @@
           <td style="padding:0.5rem">{{ user.email | default(value='') }}</td>
           <td style="padding:0.5rem">{{ user.is_admin }}</td>
           <td style="padding:0.5rem">{{ user.is_banned }}</td>
+          <td style="padding:0.5rem">{{ user.email_verified }}</td>
+          <td style="padding:0.5rem">{{ user.standing_score }}</td>
+          <td style="padding:0.5rem">{% if user.suspended_at %}Yes{% else %}No{% endif %}</td>
           <td style="padding:0.5rem">
             {% if user.is_banned %}
               <form method="POST" action="/admin/users/{{ user.username }}/unban" style="display:inline">
@@ -32,6 +39,23 @@
               <form method="POST" action="/admin/users/{{ user.username }}/ban" style="display:inline" onsubmit="return confirm('Ban {{ user.username }}?')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer">Ban</button>
+              </form>
+            {% endif %}
+            {% if not user.email_verified %}
+              <form method="POST" action="/admin/users/{{ user.username }}/force-verify" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer">Verify</button>
+              </form>
+            {% endif %}
+            {% if user.suspended_at %}
+              <form method="POST" action="/admin/users/{{ user.username }}/unsuspend" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer">Unsuspend</button>
+              </form>
+            {% else %}
+              <form method="POST" action="/admin/users/{{ user.username }}/suspend" style="display:inline" onsubmit="return confirm('Suspend {{ user.username }}?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer">Suspend</button>
               </form>
             {% endif %}
           </td>

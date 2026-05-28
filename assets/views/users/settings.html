@@ -51,4 +51,26 @@
 
   <button type="submit" class="btn">Change Password</button>
 </form>
+
+<h2 style="margin-top:2rem">Eligibility Status</h2>
+<div style="max-width:500px;padding:0.75rem;border:1px solid var(--border);border-radius:4px">
+  <p><strong>Standing Score:</strong> {{ user.standing_score }}</p>
+  <p><strong>Email Verified:</strong> {% if user.email_verified %}Yes{% else %}No
+    <form method="POST" action="/resend-verification" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer;text-decoration:underline">Resend verification email</button>
+    </form>
+  {% endif %}</p>
+  <p><strong>Suspended:</strong> {% if user.suspended_at %}Yes{% else %}No{% endif %}</p>
+  {% if eligibility %}
+    <p><strong>Can create communities:</strong> {% if eligibility.eligible %}Yes{% else %}No{% endif %}</p>
+    {% if eligibility.reasons %}
+      <ul style="color:var(--danger, #c00);margin:0.5rem 0 0 1rem">
+        {% for reason in eligibility.reasons %}
+          <li>{{ reason }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endif %}
+</div>
 {% endblock %}

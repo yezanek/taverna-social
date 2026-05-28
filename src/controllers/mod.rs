@@ -4,5 +4,7 @@ pub mod communities;
 pub mod federation;
 pub mod home;
 pub mod posts;
+pub mod setup;
 pub mod theme;
 pub mod users;
+pub mod verify;

@@ -20,11 +20,32 @@ mod tests {
         resp.cookie("csrf_token").value().to_string()
     }
 
+    async fn seed_first_user(db: &sea_orm::DatabaseConnection) {
+        if UserModel::find_by_username(db, "admin")
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            UserModel::create_local(
+                db,
+                "admin",
+                "admin@taverna.local",
+                "password123",
+                "http://localhost:5150",
+            )
+            .await
+            .ok();
+        }
+    }
+
     #[tokio::test]
     #[serial]
     async fn test_full_happy_path() {
         setup();
         request::<App, _, _>(|request, ctx| async move {
+            seed_first_user(&ctx.db).await;
+
             // Register
             let csrf = get_csrf(&request, "/register").await;
             let resp = request

@@ -1,7 +1,7 @@
 # How to Use opencode to Implement Taverna
 
 This file tells you exactly what to say to opencode to implement each phase.
-For the QA workflow using gemini-cli, see GEMINI_PROMPTS.md.
+For the QA workflow using gemini-cli, see GEMINI.md.
 
 ---
 
@@ -300,4 +300,48 @@ as defined in theme.css. Remove hardcoded hex values.
 ```
 The file [filename] contains placeholder code (todo!/unimplemented!).
 All code must be real, working implementations. Complete it now.
+```
+
+---
+
+## Phase 6 — Admin Onboarding & Community Creation Eligibility
+
+```
+Read AGENTS.md, SPEC.md (Sections 3.5, 3.6, 3.7, and 4.11–4.13), and PHASE_6.md.
+
+Phases 1–5 are complete and the application federates correctly.
+
+Show me a plan before writing any code.
+
+Implement everything in PHASE_6.md in task order:
+
+Task 6.1 — First-run setup wizard
+  Critical: FirstRunGuard must NOT block /static/* or /setup* paths.
+  POST /setup must re-check is_first_run() — do not trust GET-time state.
+  Cache the is_first_run() result for max 60 seconds, bust it after setup.
+
+Task 6.2 — Email verification
+  Use Loco's built-in mailer. Use a mock mailer in test config.
+  Token must be a cryptographically random string (use uuid or rand crate),
+  not a predictable value.
+
+Task 6.3 — Standing score
+  standing_score is updated atomically: UPDATE users SET standing_score =
+  GREATEST(-100, standing_score + $delta) WHERE id = $id
+  The floor of -100 is enforced at the DB UPDATE level, not in Rust.
+
+Task 6.4 — Eligibility checker
+  All checks are additive — a user must pass ALL enabled checks.
+  Return human-readable reasons for each failed check.
+  Call this from both GET /c/new (show reasons in form) and POST /c/ (return 403).
+
+Task 6.5 — Admin eligibility settings dashboard
+  All settings read from DB on each request — no application restart needed.
+
+Tasks 6.6, 6.7, 6.8 — Admin user management, user-facing eligibility, tests.
+
+After completing all tasks:
+  cargo fmt && cargo clippy -- -D warnings && cargo test
+
+Verify the Phase 6 deliverables checklist when done.
 ```

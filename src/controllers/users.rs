@@ -529,6 +529,9 @@ pub async fn settings_form(
         .build();
 
     let user_email = user.email.clone();
+    let eligibility = crate::models::eligibility::check_eligibility(&ctx.db, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
     let response = helpers::render_with_theme(
         &v,
         "users/settings.html",
@@ -536,6 +539,7 @@ pub async fn settings_form(
             "current_user": current_user,
             "user": user,
             "email": user_email,
+            "eligibility": eligibility,
             "csrf_token": csrf_token,
         }),
         &theme,
@@ -613,12 +617,10 @@ pub async fn update_settings(
             "to": [current_user.followers_url],
             "published": chrono::Utc::now().to_rfc3339(),
         });
-        let inboxes = crate::workers::deliver_activity::get_user_follower_inboxes(
-            &ctx.db,
-            current_user.id,
-        )
-        .await
-        .map_err(|e| Error::string(&e.to_string()))?;
+        let inboxes =
+            crate::workers::deliver_activity::get_user_follower_inboxes(&ctx.db, current_user.id)
+                .await
+                .map_err(|e| Error::string(&e.to_string()))?;
         if !inboxes.is_empty() {
             crate::workers::deliver_activity::enqueue_to_followers(
                 &ctx.db,
@@ -772,12 +774,10 @@ pub async fn create_profile_post(
             "published": chrono::Utc::now().to_rfc3339(),
         });
 
-        let inboxes = crate::workers::deliver_activity::get_user_follower_inboxes(
-            &ctx.db,
-            current_user.id,
-        )
-        .await
-        .map_err(|e| Error::string(&e.to_string()))?;
+        let inboxes =
+            crate::workers::deliver_activity::get_user_follower_inboxes(&ctx.db, current_user.id)
+                .await
+                .map_err(|e| Error::string(&e.to_string()))?;
         if !inboxes.is_empty() {
             crate::workers::deliver_activity::enqueue_to_followers(
                 &ctx.db,

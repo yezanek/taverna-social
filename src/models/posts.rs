@@ -211,14 +211,18 @@ impl PostModel {
     /// Marks a post as removed by a moderator (soft removal).
     #[instrument(skip(db))]
     pub async fn soft_remove(db: &DatabaseConnection, post_id: Uuid) -> Result<(), sea_orm::DbErr> {
-        let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
+        let found = posts::Entity::find_by_id(post_id)
             .one(db)
             .await?
-            .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?
-            .into();
+            .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?;
+        let author_id = found.author_id;
+        let mut post: posts::ActiveModel = found.into();
         post.is_removed = Set(true);
         post.updated_at = Set(chrono::Utc::now().into());
         post.update(db).await?;
+
+        let _ = crate::models::users::UserModel::update_standing(db, author_id, -5).await;
+
         Ok(())
     }
 

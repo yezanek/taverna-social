@@ -32,6 +32,9 @@ pub struct Model {
     pub is_local: bool,
     pub is_admin: bool,
     pub is_banned: bool,
+    pub email_verified: bool,
+    pub standing_score: i32,
+    pub suspended_at: Option<DateTimeWithTimeZone>,
     #[sea_orm(column_type = "Text")]
     pub inbox_url: String,
     #[sea_orm(column_type = "Text", nullable)]
