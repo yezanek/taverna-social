@@ -128,6 +128,9 @@ impl Object for DbUser {
             is_local: Set(false),
             is_admin: Set(false),
             is_banned: Set(false),
+            email_verified: Set(false),
+            standing_score: Set(0),
+            suspended_at: Set(None),
             inbox_url: Set(inbox_url),
             shared_inbox_url: Set(None),
             followers_url: Set(json

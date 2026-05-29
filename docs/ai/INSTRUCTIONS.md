@@ -29,20 +29,24 @@ A self-hostable, federated community platform — Facebook Groups meets old Redd
 
 ## Repository Layout
 
-```text
+```
 taverna-social/                 ← git repo root
-├── INSTRUCTIONS.md                   ← you are here
-├── AGENTS.md                   ← coding rules; read automatically by AI tools
-├── SPEC.md                     ← full technical specification (authoritative)
-├── DECISIONS.md                ← architecture decision log
-├── PHASE_1.md                  ← scaffold & database
-├── PHASE_2.md                  ← authentication
-├── PHASE_3.md                  ← communities, posts, theme switcher
-├── PHASE_4.md                  ← ActivityPub federation
-├── PHASE_5.md                  ← profiles, moderation, production
-├── OPENCODE_PROMPTS.md         ← prompts to paste into opencode (implementor)
-├── GEMINI_PROMPTS.md           ← prompts to paste into gemini-cli (QA)
-├── taverna_design.docx         ← full architecture design document
+├── README.md                   ← your project README (not this file)
+├── AGENTS.md                   ← coding rules; auto-loaded by AI tools at startup
+├── docs/
+│   └── ai/                     ← all AI planning and instruction files
+│       ├── INSTRUCTIONS.md     ← you are here
+│       ├── SPEC.md             ← full technical specification (authoritative)
+│       ├── DECISIONS.md        ← architecture decision log
+│       ├── PHASE_1.md          ← scaffold & database
+│       ├── PHASE_2.md          ← authentication
+│       ├── PHASE_3.md          ← communities, posts, theme switcher
+│       ├── PHASE_4.md          ← ActivityPub federation
+│       ├── PHASE_5.md          ← profiles, moderation, production
+│       ├── PHASE_6.md          ← admin onboarding, email verification, eligibility
+│       ├── OPENCODE_PROMPTS.md ← prompts to paste into opencode (implementor)
+│       ├── GEMINI_PROMPTS.md   ← prompts to paste into gemini-cli (QA)
+│       └── taverna_design.docx ← full architecture design document
 ├── .opencode/
 │   └── commands/               ← opencode slash commands (auto-loaded by opencode)
 │       ├── implement-phase.md
@@ -78,19 +82,19 @@ This project is designed to be implemented by **opencode** (writer) and reviewed
 
 | Tool | Role | Reads automatically |
 |---|---|---|
-| opencode | Implements code | `AGENTS.md`, `.opencode/commands/*.md` |
-| gemini-cli | QA and review | `AGENTS.md` |
-| Both | Reference when told | `SPEC.md`, `PHASE_*.md`, `DECISIONS.md` |
+| opencode | Implements code | `AGENTS.md` (root), `.opencode/commands/*.md` |
+| gemini-cli | QA and review | `AGENTS.md` (root) |
+| Both | Reference when told | `docs/ai/SPEC.md`, `docs/ai/PHASE_*.md`, `docs/ai/DECISIONS.md` |
 
-`OPENCODE_PROMPTS.md` and `GEMINI_PROMPTS.md` are **your** cheat sheets — prompts you copy and paste into each tool. The tools do not read these files on their own.
+`docs/ai/OPENCODE_PROMPTS.md` and `docs/ai/GEMINI_PROMPTS.md` are **your** cheat sheets — prompts you copy and paste into each tool. The tools do not read these files on their own.
 
 ### Workflow per phase
 
-```text
-1. Open OPENCODE_PROMPTS.md → copy the phase prompt → paste into opencode
+```
+1. Open `docs/ai/OPENCODE_PROMPTS.md` → copy the phase prompt → paste into opencode
 2. opencode shows a plan → you approve → it implements
 3. Run the gate: cargo check && cargo test && cargo clippy -- -D warnings
-4. Open GEMINI_PROMPTS.md → copy the phase QA prompt → paste into gemini-cli
+4. Open `docs/ai/GEMINI_PROMPTS.md` → copy the phase QA prompt → paste into gemini-cli
 5. gemini-cli reports issues → copy findings → paste into opencode with /project:fix-issue
 6. Re-run the gate → proceed to next phase
 ```
@@ -99,7 +103,7 @@ This project is designed to be implemented by **opencode** (writer) and reviewed
 
 Inside opencode, these commands are available once you open the project directory:
 
-```text
+```
 /project:implement-phase 1      implement a full phase (shows plan first)
 /project:implement-theme        implement the theme switcher specifically
 /project:implement-federation   implement the AP federation layer specifically

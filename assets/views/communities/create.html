@@ -1,0 +1,36 @@
+{% extends "layouts/base.html" %}
+{% block title %}Create Community - Taverna{% endblock %}
+{% block content %}
+<h1>Create Community</h1>
+
+{% if eligibility and not eligibility.eligible %}
+<div style="background:var(--danger-bg, #fdd);border:1px solid var(--danger, #c00);border-radius:8px;padding:1rem;margin-bottom:1rem">
+  <strong>Not eligible to create a community.</strong>
+  <ul style="margin:0.5rem 0 0 1rem">
+    {% for reason in eligibility.reasons %}
+      <li>{{ reason }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="POST" action="/c/">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="form-row">
+      <label for="name">Name</label>
+      <input type="text" name="name" id="name" required maxlength="100" class="form-input">
+    </div>
+    <div class="form-row">
+      <label for="slug">URL Slug</label>
+      <input type="text" name="slug" id="slug" required maxlength="50" pattern="[a-z0-9-]+" class="form-input">
+      <small>Lowercase letters, numbers, and hyphens only.</small>
+    </div>
+    <div class="form-row">
+      <label for="description">Description</label>
+      <textarea name="description" id="description" class="form-textarea" rows="4"></textarea>
+    </div>
+    <button type="submit" class="btn" {% if eligibility and not eligibility.eligible %}disabled style="opacity:0.5"{% endif %}>Create</button>
+  </form>
+</div>
+{% endblock %}

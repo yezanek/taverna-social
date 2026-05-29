@@ -190,6 +190,49 @@ POST /theme   → set taverna_theme cookie, redirect to Referer (or / if no Refe
 
 The `theme` variable is injected into every template context by a Tera global or by every handler reading the cookie. Prefer a Tera global function or a middleware that injects `theme` into every context automatically — do not manually add it in each handler.
 
+
+### 3.5 Admin Onboarding (First Run)
+
+- When the instance has zero local users, all web requests redirect to `/setup`
+- The setup wizard creates the first admin user (username, email, password, instance name)
+- After setup completes, `/setup` returns 403 permanently
+- The first user created via `/setup` always has `is_admin = true`
+
+### 3.6 Email Verification
+
+- On registration, a verification email is sent with a time-limited token link
+- `GET /verify-email?token=...` validates the token and sets `email_verified = true`
+- Tokens expire after 24 hours
+- Users can resend their verification email from account settings
+- Admins can force-verify a user from the admin dashboard
+
+### 3.7 Community Creation Eligibility
+
+Users can create communities if they pass the eligibility gate configured by the admin.
+
+The gate is instance-wide and configured in the admin dashboard. When
+`community_creation_open = true` (the default), any registered user may create
+a community. When false, users must pass all enabled checks:
+
+| Check | Description |
+|---|---|
+| Minimum account age | Account must be at least N days old |
+| Email verified | User must have verified their email address |
+| Minimum standing score | User's standing score must be ≥ N |
+| Not disqualified by removed content | No posts/comments removed by a moderator |
+| Not disqualified by suspension history | Account has never been suspended |
+
+**Standing score** is a denormalized value on the user record:
+- +1 for each upvote received on any post or comment
+- -1 for each downvote received on any post or comment
+- -5 (default, configurable) when a post or comment is removed by a moderator
+- Reversed when a vote is removed
+- Floored at -100 (to prevent unbounded abuse)
+
+All eligibility settings take effect immediately with no application restart.
+Users can see their own eligibility status and any blocking reasons on their
+settings page.
+
 ---
 
 ## 4. Data Model
@@ -367,6 +410,54 @@ CREATE INDEX idx_outbound_pending ON outbound_activities(next_attempt_at)
   WHERE state = 'pending';
 ```
 
+
+### 4.11 Table: instance_settings
+
+```sql
+CREATE TABLE instance_settings (
+  id                             BOOL PRIMARY KEY DEFAULT true CHECK (id = true),
+  instance_name                  TEXT NOT NULL DEFAULT 'Taverna',
+  open_registrations             BOOL NOT NULL DEFAULT true,
+  community_creation_open        BOOL NOT NULL DEFAULT true,
+  require_min_account_age        BOOL NOT NULL DEFAULT false,
+  min_account_age_days           INT  NOT NULL DEFAULT 30,
+  require_email_verified         BOOL NOT NULL DEFAULT false,
+  require_min_standing           BOOL NOT NULL DEFAULT false,
+  min_standing_score             INT  NOT NULL DEFAULT 0,
+  disqualify_if_content_removed  BOOL NOT NULL DEFAULT false,
+  disqualify_if_suspended        BOOL NOT NULL DEFAULT false,
+  updated_at                     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO instance_settings DEFAULT VALUES;
+```
+
+### 4.12 Table: email_verifications
+
+```sql
+CREATE TABLE email_verifications (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token       TEXT NOT NULL UNIQUE,
+  expires_at  TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours',
+  verified_at TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_email_verif_token ON email_verifications(token);
+CREATE INDEX idx_email_verif_user  ON email_verifications(user_id);
+```
+
+### 4.13 Additional columns on users (migration m008)
+
+```sql
+ALTER TABLE users ADD COLUMN email_verified  BOOL NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN standing_score  INT  NOT NULL DEFAULT 0
+                              CHECK (standing_score >= -100);
+ALTER TABLE users ADD COLUMN suspended_at    TIMESTAMPTZ;
+```
+
+`suspended_at` non-null means the user is suspended. Suspension is reversible.
+`is_banned` remains for permanent bans.
+
 ---
 
 ## 5. URL Structure
@@ -401,6 +492,13 @@ GET  /u/:username/posts          User post history
 GET  /u/:username/comments       User comment history
 
 GET  /settings                   Account settings
+GET  /setup                      First-run setup wizard (only before first user exists)
+POST /setup                      Create admin user and instance settings
+GET  /verify-email               Verify email token
+POST /resend-verification        Resend verification email (auth required)
+GET  /admin/settings             Eligibility settings form (admin only)
+POST /admin/settings             Save eligibility settings (admin only)
+
 POST /settings                   Update account
 POST /settings/password          Change password
 ```
@@ -508,3 +606,5 @@ workers:
 ## 9. Out of Scope for v1
 
 Do NOT build: media uploads, OAuth/SSO, Bluesky bridge, full-text search, direct messages, push notifications, defederation admin UI.
+
+Built in Phase 6 (not v1 but planned): admin first-run wizard, email verification, community creation eligibility, standing score system.

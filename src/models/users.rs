@@ -87,6 +87,9 @@ impl UserModel {
             is_local: Set(true),
             is_admin: Set(false),
             is_banned: Set(false),
+            email_verified: Set(false),
+            standing_score: Set(0),
+            suspended_at: Set(None),
             inbox_url: Set(inbox_url),
             shared_inbox_url: Set(None),
             followers_url: Set(followers_url),
@@ -309,6 +312,90 @@ impl UserModel {
             .ok_or(UserError::Validation("User not found".to_string()))?
             .into();
         user.is_banned = Set(banned);
+        user.updated_at = Set(chrono::Utc::now().into());
+        user.update(db).await?;
+        Ok(())
+    }
+
+    /// Atomically updates a user's standing score with a floor of -100.
+    #[instrument(skip(db))]
+    pub async fn update_standing(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+        delta: i32,
+    ) -> Result<(), UserError> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let stmt = Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            r#"UPDATE users SET standing_score = GREATEST(-100, standing_score + $1) WHERE id = $2"#,
+            vec![
+                sea_orm::Value::Int(Some(delta)),
+                sea_orm::Value::Uuid(Some(Box::new(user_id))),
+            ],
+        );
+        db.execute(stmt).await?;
+        Ok(())
+    }
+
+    /// Checks if a user has any post or comment removed by a moderator.
+    #[instrument(skip(db))]
+    pub async fn has_removed_content(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+    ) -> Result<bool, sea_orm::DbErr> {
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+        let post_removed = crate::models::_entities::posts::Entity::find()
+            .filter(crate::models::_entities::posts::Column::AuthorId.eq(user_id))
+            .filter(crate::models::_entities::posts::Column::IsRemoved.eq(true))
+            .count(db)
+            .await?
+            > 0;
+        if post_removed {
+            return Ok(true);
+        }
+        let comment_removed = crate::models::_entities::comments::Entity::find()
+            .filter(crate::models::_entities::comments::Column::AuthorId.eq(user_id))
+            .filter(crate::models::_entities::comments::Column::IsRemoved.eq(true))
+            .count(db)
+            .await?
+            > 0;
+        Ok(comment_removed)
+    }
+
+    /// Sets or clears the suspended_at timestamp on a user.
+    #[instrument(skip(db))]
+    pub async fn set_suspended(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+        suspended: bool,
+    ) -> Result<(), UserError> {
+        let mut user: users::ActiveModel = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or(UserError::Validation("User not found".to_string()))?
+            .into();
+        user.suspended_at = Set(if suspended {
+            Some(chrono::Utc::now().into())
+        } else {
+            None
+        });
+        user.updated_at = Set(chrono::Utc::now().into());
+        user.update(db).await?;
+        Ok(())
+    }
+
+    /// Forces email verification for a user (admin action, no token required).
+    #[instrument(skip(db))]
+    pub async fn force_verify_email(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+    ) -> Result<(), UserError> {
+        let mut user: users::ActiveModel = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or(UserError::Validation("User not found".to_string()))?
+            .into();
+        user.email_verified = Set(true);
         user.updated_at = Set(chrono::Utc::now().into());
         user.update(db).await?;
         Ok(())

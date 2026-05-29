@@ -91,3 +91,65 @@ This file records WHY specific decisions were made. If you are an AI agent readi
 **Reason:** The Fediverse is eventually consistent and unreliable. Remote servers retry deliveries. Network failures cause duplicate sends. Idempotency (checking ap_id before insert) is required for correctness.
 
 **Always check ap_id existence before inserting any federated object.**
+
+---
+
+## ADR-012: Single-row instance_settings table
+
+**Decision:** Store instance-wide configuration in a single-row table enforced
+by `CHECK (id = true)` on a boolean primary key.
+
+**Reason:** Avoids a settings key-value table (hard to type-check in Rust) and
+an application-level singleton (hard to invalidate). A single strongly-typed row
+with named columns is readable, safe, and queryable with SeaORM without special
+handling. The CHECK constraint makes it impossible to insert a second row.
+
+**Do not replace with a key-value store or environment variables for
+runtime-configurable settings.** Environment variables require a restart to
+change. Key-value tables lose type safety.
+
+---
+
+## ADR-013: Standing score floor at -100
+
+**Decision:** `standing_score` is floored at -100 via `GREATEST(-100, score + delta)`
+in the UPDATE statement, enforced at the database level.
+
+**Reason:** Without a floor, a heavily downvoted or heavily moderated user
+accumulates a score that can never be recovered from in practice, which is a
+moderation abuse vector (mass-downvote campaigns). -100 is recoverable with
+consistent positive contributions. The floor is enforced in SQL, not Rust, so it
+applies regardless of which code path triggers the update.
+
+**Do not enforce the floor only in Rust.** A future migration or admin tool might
+update scores directly.
+
+---
+
+## ADR-014: Suspension vs. Ban
+
+**Decision:** Two distinct concepts: `suspended_at TIMESTAMPTZ` (reversible,
+affects eligibility) and `is_banned BOOL` (permanent, blocks all access).
+
+**Reason:** Moderation needs nuance. A ban is a terminal action — the user
+cannot log in. A suspension is a temporary or conditional restriction that
+affects eligibility for trust-gated actions (like creating communities) but
+does not prevent the user from participating otherwise. Keeping them as separate
+columns avoids ambiguous states and makes the admin UI clearer.
+
+**Do not conflate suspension and banning** by reusing `is_banned` for both.
+
+---
+
+## ADR-015: First-run detection via user count
+
+**Decision:** Detect first-run state by counting local users in the database,
+not via a config file flag or a "setup_complete" table.
+
+**Reason:** A config file flag can get out of sync with reality (e.g. if the
+database is wiped but the flag file is not). The user count is the ground truth.
+If there are zero local users, setup has not been completed regardless of any
+other state. The result is cached for 60 seconds per process to avoid a DB query
+on every request.
+
+**Do not use a setup_complete flag file or environment variable for this.**

@@ -326,6 +326,29 @@ impl CommentModel {
         Ok(comment.update(db).await?)
     }
 
+    /// Marks a comment as removed by a moderator (soft removal).
+    #[instrument(skip(db))]
+    pub async fn soft_remove(
+        db: &DatabaseConnection,
+        comment_id: Uuid,
+    ) -> Result<(), sea_orm::DbErr> {
+        let found = comments::Entity::find_by_id(comment_id)
+            .one(db)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound(
+                "Comment not found".to_string(),
+            ))?;
+        let author_id = found.author_id;
+        let mut comment: comments::ActiveModel = found.into();
+        comment.is_removed = Set(true);
+        comment.updated_at = Set(chrono::Utc::now().into());
+        comment.update(db).await?;
+
+        let _ = crate::models::users::UserModel::update_standing(db, author_id, -5).await;
+
+        Ok(())
+    }
+
     /// Marks a comment as deleted (soft delete — retains the row).
     #[instrument(skip(db))]
     pub async fn soft_delete(

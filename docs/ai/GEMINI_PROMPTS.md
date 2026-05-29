@@ -96,11 +96,11 @@ Only proceed to the next phase when all gates pass and no CRITICAL issues remain
 ```
 You are a QA engineer reviewing Phase 1 of the Taverna project.
 
-Read AGENTS.md, SPEC.md, and PHASE_1.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_1.md.
 
 Then verify:
 
-DELIVERABLES — check every item in the PHASE_1.md deliverables checklist exists.
+DELIVERABLES — check every item in the docs/ai/PHASE_1.md deliverables checklist exists.
 
 DATABASE SCHEMA — open each migration file and verify:
 - users and communities tables have last_fetched_at TIMESTAMPTZ (required by activitypub_federation crate)
@@ -127,7 +127,7 @@ Report issues as CRITICAL (blocker), MEDIUM (should fix), or LOW (style).
 ```
 You are a QA engineer reviewing Phase 2 of the Taverna project.
 
-Read AGENTS.md, SPEC.md, and PHASE_2.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_2.md.
 
 Verify:
 
@@ -169,7 +169,7 @@ Report CRITICAL / MEDIUM / LOW.
 ```
 You are a QA engineer reviewing Phase 3 of the Taverna project.
 
-Read AGENTS.md, SPEC.md Section 3.5, and PHASE_3.md.
+Read AGENTS.md, docs/ai/SPEC.md Section 3.5, and docs/ai/PHASE_3.md.
 
 Verify:
 
@@ -232,7 +232,7 @@ Report CRITICAL / MEDIUM / LOW.
 ```
 You are a QA engineer reviewing Phase 4 of the Taverna project.
 
-Read AGENTS.md, SPEC.md Section 6, and PHASE_4.md.
+Read AGENTS.md, docs/ai/SPEC.md Section 6, and docs/ai/PHASE_4.md.
 
 Verify:
 
@@ -306,7 +306,7 @@ Report CRITICAL / MEDIUM / LOW.
 ```
 You are a QA engineer reviewing Phase 5 of the Taverna project.
 
-Read AGENTS.md, SPEC.md, and PHASE_5.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_5.md.
 
 Verify:
 
@@ -350,7 +350,7 @@ Run: cargo test
 
 All must produce zero errors and zero warnings.
 
-Verify the Definition of Done checklist at the bottom of PHASE_5.md.
+Verify the Definition of Done checklist at the bottom of docs/ai/PHASE_5.md.
 
 Report CRITICAL / MEDIUM / LOW.
 ```
@@ -363,7 +363,7 @@ Use these for specific concerns at any point:
 
 **Security audit:**
 ```
-Read SPEC.md Section 7. Audit the entire src/ directory for:
+Read docs/ai/SPEC.md Section 7. Audit the entire src/ directory for:
 1. Any .unwrap() in non-test production code
 2. Any SQL string interpolation (not parameterized)
 3. Any user content rendered without ammonia sanitization
@@ -385,6 +385,78 @@ List every occurrence with file and line number. These are all CRITICAL.
 Review every .html file in views/.
 Any element with a hardcoded colour (hex, rgb, named colour other than inherit/transparent)
 that is not inside a CSS var() call: report as MEDIUM.
+```
+
+
+---
+
+## Phase 6 QA Prompt
+
+```
+You are a QA engineer reviewing Phase 6 of the Taverna project.
+
+Read AGENTS.md, docs/ai/SPEC.md Sections 3.5–3.7 and 4.11–4.13, and docs/ai/PHASE_6.md.
+
+Verify:
+
+FIRST-RUN SETUP
+- Open src/initializers/first_run.rs. is_first_run() queries users table
+  for local users and returns true when count is 0.
+- FirstRunGuard middleware must NOT redirect /setup*, /static/*, or /verify-email*.
+  If it does: CRITICAL (setup page can't load its own CSS or JS).
+- POST /setup must call is_first_run() — if false, return 403.
+  If it trusts only a session variable or GET-time check: CRITICAL.
+- The admin user created by setup must have is_admin=true. If not: CRITICAL.
+- After setup, navigating to /setup must return 403, not the wizard form.
+
+EMAIL VERIFICATION
+- Tokens must be cryptographically random (uuid v4 or equivalent).
+  If tokens are sequential integers or predictable: CRITICAL.
+- Tokens expire after 24 hours. If no expiry check: CRITICAL.
+- Expired tokens must return a clear error, not a 500.
+- Verifying the same token twice must be a no-op (idempotent).
+- Verification emails must NOT be sent in tests (check for mock mailer config).
+
+STANDING SCORE
+- open src/models/users.rs or votes.rs. update_standing must use an atomic
+  UPDATE with GREATEST(-100, standing_score + $delta).
+  If it reads then writes (two queries): MEDIUM (race condition under load).
+- VoteModel::cast_vote must call update_standing for the content author,
+  not the voter. If it updates the voter: CRITICAL.
+- VoteAction::Removed case must reverse the delta (not just skip the update).
+- soft_remove on posts and comments must deduct standing from the author.
+
+ELIGIBILITY CHECKER
+- All enabled gates must ALL pass — one failure must block creation.
+- Reasons list must be accurate: only list the gates that actually failed.
+- GET /c/new must show reasons when user is ineligible (not a silent 403).
+- POST /c/ must return 403 with reasons when user is ineligible.
+
+ADMIN SETTINGS
+- instance_settings table has exactly one row (enforced by CHECK (id = true)).
+- POST /admin/settings must require is_admin=true. If a regular user can POST:
+  CRITICAL.
+- Settings take effect immediately on next request (no caching beyond the
+  request lifetime).
+
+USER-FACING ELIGIBILITY
+- /settings page shows eligibility status for the logged-in user.
+- Reasons shown match what check_community_creation_eligibility() returns.
+
+Run: cargo test
+Report any failing tests as CRITICAL.
+
+Check these specific tests exist (MEDIUM if missing):
+- test_setup_wizard_redirects_when_not_first_run
+- test_setup_disabled_after_first_user_created
+- test_account_age_gate
+- test_standing_score_gate
+- test_removed_content_disqualifies
+- test_upvote_increases_standing
+- test_vote_removal_reverses_delta
+- test_expired_token_rejected
+
+Report CRITICAL / MEDIUM / LOW.
 ```
 
 ---
@@ -712,4 +784,229 @@ FAIL
 
 Begin with Area 1. If cargo build --release fails, stop and report FAIL immediately.
 Otherwise work through all ten areas, then give the verdict.
+```
+
+---
+
+## Targeted Codebase Audit (run at any point to scan for issues)
+
+Use this when you have made changes and want a general health check, or when
+you notice something feels wrong but can't pinpoint it. Unlike the per-phase
+QA prompts (which check specific deliverables) and the Final Acceptance Test
+(which assumes all phases are done), this prompt scans the whole codebase for
+common issues regardless of what phase you are on.
+
+### How to run it
+
+```bash
+cd taverna-social
+gemini --model gemini-2.5-pro
+```
+
+Paste the prompt below.
+
+---
+
+### The Prompt
+
+```
+You are performing a targeted audit of the Taverna codebase. This is a
+general health scan — not tied to any specific phase or feature. Your job
+is to find real problems in the existing code, not to verify planned features.
+
+Read docs/ai/SPEC.md and AGENTS.md first. Then work through the following areas.
+Report every finding with: file path, line number if possible, severity
+(CRITICAL / MEDIUM / LOW), and a concrete description of the problem.
+
+Do not report things that are correct. Only report actual issues.
+
+────────────────────────────────────────────────────────────────────────────────
+SCAN 1 — Compilation and lint baseline
+────────────────────────────────────────────────────────────────────────────────
+
+Run these and report any output:
+
+  cargo check 2>&1
+  cargo clippy -- -D warnings 2>&1
+  cargo fmt --check 2>&1
+
+If cargo check fails: stop and report all errors as CRITICAL.
+Clippy warnings: report each as MEDIUM.
+Format issues: report as LOW (auto-fixable with cargo fmt).
+
+────────────────────────────────────────────────────────────────────────────────
+SCAN 2 — Stub and placeholder code
+────────────────────────────────────────────────────────────────────────────────
+
+Run these searches and report every match:
+
+  grep -rn "todo!\|unimplemented!\|panic!(" src/ --include="*.rs" \
+    | grep -v "#\[cfg(test)\]\|mod tests\|// panic-ok"
+
+  grep -rn "\.unwrap()" src/ --include="*.rs" \
+    | grep -v "#\[cfg(test)\]\|mod tests\|// unwrap-ok"
+
+  grep -rn "dbg!(" src/ --include="*.rs"
+
+  # Functions whose entire body is a stub return
+  grep -rn "Ok(())\|todo!()\|unimplemented!()" src/ --include="*.rs"
+
+For every unwrap() found outside tests: report as CRITICAL.
+For every todo!/unimplemented!: report as CRITICAL.
+For every dbg!(): report as MEDIUM.
+
+────────────────────────────────────────────────────────────────────────────────
+SCAN 3 — Security patterns
+────────────────────────────────────────────────────────────────────────────────
+
+3a. SQL injection risk
+    Search for format!() calls that contain SQL keywords:
+      grep -rn "format!.*SELECT\|format!.*INSERT\|format!.*UPDATE\|format!.*DELETE" \
+        src/ --include="*.rs"
+    Any match: CRITICAL.
+
+3b. Hardcoded secrets
+    grep -rn -i "password\s*=\s*\"[^{]\|secret\s*=\s*\"[^{]\|api_key\s*=\s*\"[^{]" \
+      src/ config/ --include="*.rs" --include="*.yaml" \
+      | grep -v "test\|example\|placeholder\|your-secret\|changeme"
+    Any match: CRITICAL.
+
+3c. Markdown not sanitized
+    Find all places markdown is rendered. Verify each calls ammonia::clean()
+    after pulldown_cmark parsing. If any render path skips ammonia: CRITICAL.
+
+3d. Tera | safe on user content
+    grep -rn "| safe" views/ --include="*.html" \
+      | grep -v "rendered_\|markdown_\|body_html\|content_html\|safe_html"
+    Any match that is not pre-sanitized server-side HTML: CRITICAL.
+
+3e. JWT stored outside httpOnly cookie
+    Search for "localStorage\|sessionStorage\|Authorization.*Bearer" in
+    src/ and views/. If JWT is stored client-side or sent as a header
+    from JavaScript: CRITICAL.
+
+3f. Password hashing algorithm
+    grep -rn "bcrypt\|md5\|sha256.*password\|sha1.*password" src/ --include="*.rs"
+    Any match: CRITICAL. Must use argon2id.
+
+────────────────────────────────────────────────────────────────────────────────
+SCAN 4 — Federation correctness
+────────────────────────────────────────────────────────────────────────────────
+
+4a. Raw reqwest in federation code
+    grep -rn "reqwest::" src/federation/ src/controllers/federation/ \
+      --include="*.rs" 2>/dev/null
+    Any match: CRITICAL. Must use SendActivityTask::send() or ObjectId::dereference().
+
+4b. Manual signature code
+    grep -rn "use rsa::\|use sha2::\|HmacSha\|RsaPrivateKey" \
+      src/federation/ src/controllers/federation/ --include="*.rs" 2>/dev/null
+    Any match: CRITICAL. activitypub_federation handles signing.
+
+4c. verify_domains_match missing
+    Open each file in src/federation/types/ that implements the Object trait.
+    Each verify() method must call verify_domains_match().
+    Missing calls: CRITICAL.
+
+4d. Idempotency gaps
+    For each ActivityHandler::receive implementation, verify there is a
+    database lookup by ap_id before any INSERT. If any receive() inserts
+    without checking: CRITICAL.
+
+4e. Announce pattern present
+    Find Create activity's ActivityHandler::receive. When inbox owner is a
+    Community, after saving the post, must call SendActivityTask::send with
+    an Announce activity signed by the community actor.
+    Missing: CRITICAL.
+
+────────────────────────────────────────────────────────────────────────────────
+SCAN 5 — Data integrity
+────────────────────────────────────────────────────────────────────────────────
+
+5a. Score recalculation
+    Every vote operation (cast_vote in votes.rs) must call recalculate_score.
+    Read votes.rs and confirm recalculate_score is called for both post and
+    comment votes. Missing: CRITICAL.
+
+5b. ltree path correctness
+    Open src/models/comments.rs, create() method.
+    - Top-level path: format!("{}.{}", post_seg, comment_seg)
+    - Reply path: format!("{}.{}", parent.path, comment_seg)
+    - Each segment must start with a letter (prefix "c" required for ltree)
+    Wrong format: CRITICAL (threaded comments will break silently).
+
+5c. post_has_content constraint respected
+    Find post creation in src/models/posts.rs.
+    At least one of body or url must be non-null before inserting.
+    If validation is missing: MEDIUM (DB constraint will catch it, but with
+    a poor error message).
+
+5d. Denormalized counts
+    Find comment creation. comment_count on the parent post must be
+    incremented. Find comment deletion. comment_count must be decremented.
+    Missing: MEDIUM.
+
+────────────────────────────────────────────────────────────────────────────────
+SCAN 6 — Theme consistency
+────────────────────────────────────────────────────────────────────────────────
+
+6a. Hardcoded colours in templates
+    grep -rn "#[0-9a-fA-F]\{3,6\}\|rgb(\|rgba(" views/ --include="*.html"
+    Any found outside theme.css: MEDIUM.
+
+6b. Theme not injected in a handler
+    List all handlers that render a full HTML page (not HTMX fragments).
+    Each must extract CurrentTheme and pass it to render_with_theme.
+    grep -rn "tera.render\b" src/ --include="*.rs" \
+      | grep -v "render_with_theme\|fragment\|htmx"
+    Any plain tera.render() call for a full page: MEDIUM (page ignores theme).
+
+6c. HTMX endpoints leaking full pages
+    Vote endpoints and reply-form endpoints must return HTML fragments only.
+    Check that handlers for /vote and /reply-form check HX-Request header
+    and return partial HTML. If they return full pages: MEDIUM.
+
+────────────────────────────────────────────────────────────────────────────────
+SCAN 7 — Dead code and unused imports
+────────────────────────────────────────────────────────────────────────────────
+
+    cargo check 2>&1 | grep "warning.*unused\|warning.*dead_code\|warning.*never used"
+
+Report each as LOW. These are not urgent but indicate incomplete wiring.
+
+────────────────────────────────────────────────────────────────────────────────
+SCAN 8 — Test coverage gaps
+────────────────────────────────────────────────────────────────────────────────
+
+Run: cargo test 2>&1
+Report any failing tests as CRITICAL.
+
+Then check for these specific tests — if any are missing, report as MEDIUM:
+- A test that verifies the ltree path format for top-level comments
+- A test that verifies the ltree path format for nested replies
+- A test that verifies duplicate AP activity is handled idempotently
+- A test that verifies POST /theme sets the correct cookie
+- A test that verifies score recalculates after a vote
+
+────────────────────────────────────────────────────────────────────────────────
+REPORT FORMAT
+────────────────────────────────────────────────────────────────────────────────
+
+Group findings by severity:
+
+CRITICAL — must fix before this code runs in production
+  [file:line] Description of the problem and why it matters.
+
+MEDIUM — should fix; causes bugs or degrades correctness
+  [file:line] Description.
+
+LOW — clean up when convenient
+  [file:line] Description.
+
+End with a one-line summary:
+  "X critical, Y medium, Z low issues found."
+
+If zero issues: "No issues found. Codebase is clean."
+
+Take any CRITICAL findings to opencode with /project:fix-issue.
 ```

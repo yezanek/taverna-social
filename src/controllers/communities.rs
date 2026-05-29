@@ -167,6 +167,91 @@ pub async fn feed(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
+/// Form data for creating a new community.
+#[derive(Debug, Deserialize)]
+pub struct CreateCommunityForm {
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
+}
+
+/// Shows the form to create a new community (with eligibility check).
+#[instrument(skip(v, ctx, theme, current_user, jar))]
+pub async fn new_community_form(
+    ViewEngine(v): ViewEngine<TeraView>,
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(theme): Extension<CurrentTheme>,
+) -> Result<Response> {
+    let eligibility = crate::models::eligibility::check_eligibility(&ctx.db, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .secure(cfg!(not(debug_assertions)))
+        .path("/")
+        .build();
+
+    let response = helpers::render_with_theme(
+        &v,
+        "communities/create.html",
+        json!({
+            "current_user": current_user,
+            "eligibility": eligibility,
+            "csrf_token": csrf_token,
+        }),
+        &theme,
+    )?;
+    Ok((jar.add(csrf_cookie), response).into_response())
+}
+
+/// Creates a new community (with eligibility check).
+#[instrument(skip(ctx, jar, headers, taverna))]
+pub async fn create_community(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Form(form): Form<CreateCommunityForm>,
+) -> Result<Response> {
+    use crate::controllers::auth::validate_csrf;
+
+    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
+    let eligibility = crate::models::eligibility::check_eligibility(&ctx.db, current_user.id)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
+
+    if !eligibility.eligible {
+        return Err(Error::CustomError(
+            axum::http::StatusCode::FORBIDDEN,
+            loco_rs::controller::ErrorDetail::with_reason(eligibility.reasons.join("; ")),
+        ));
+    }
+
+    let community = CommunityModel::create(
+        &ctx.db,
+        &form.slug,
+        &form.name,
+        form.description.as_deref(),
+        current_user.id,
+        &taverna.base_url,
+    )
+    .await
+    .map_err(|e| Error::BadRequest(e.to_string()))?;
+
+    Ok(format::redirect(&format!("/c/{}", community.slug)).into_response())
+}
+
 /// Renders the form to create a new post in a community.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn new_post_form(

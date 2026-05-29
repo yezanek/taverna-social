@@ -24,7 +24,7 @@ source ~/.cargo/env
 # Loco and SeaORM CLIs
 cargo install loco-cli sea-orm-cli
 
-# PostgreSQL 16 and pgmq — see README.md Prerequisites section
+# PostgreSQL 16 and pgmq — see INSTRUCTIONS.md Prerequisites section
 # Databases must exist before Phase 1:
 createdb taverna_development && createdb taverna_test
 ```
@@ -89,10 +89,10 @@ For anything that creates or significantly modifies files, use Plan mode.
 
 ## Phase 1 — Scaffold & Database
 
-Run from the **repo root** (`taverna-social/`):
+Run from the **repo root** (`taverna-social/`), with docs/ai/ files visible:
 
 ```
-Read AGENTS.md, SPEC.md, and PHASE_1.md from the current directory.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_1.md from the docs/ai/ directory.
 
 Follow every instruction in PHASE_1.md exactly. Do not skip any task.
 
@@ -103,7 +103,7 @@ Important: include last_fetched_at TIMESTAMPTZ on the users and communities tabl
 the activitypub_federation crate requires this field for the Object trait's
 last_refreshed_at() method.
 
-Verify the PHASE_1.md deliverables checklist when done.
+Verify the docs/ai/PHASE_1.md deliverables checklist when done.
 
 Note: `loco new` will try to create a subdirectory. After scaffolding, move all
 generated files up to the repo root (Cargo.toml, src/, config/, migration/, assets/)
@@ -122,7 +122,7 @@ cargo test
 ## Phase 2 — Authentication & User Model
 
 ```
-Read AGENTS.md, SPEC.md, and PHASE_2.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_2.md.
 
 Phase 1 is complete. The database has been migrated and SeaORM entities
 are in src/models/_entities/.
@@ -148,7 +148,7 @@ cargo check && cargo test
 ## Phase 3 — Communities, Posts & Theme Switcher
 
 ```
-Read AGENTS.md, SPEC.md, and PHASE_3.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_3.md.
 
 Phases 1 and 2 are complete. Auth works.
 
@@ -186,7 +186,7 @@ curl -X POST http://localhost:3000/theme -d "theme=dark" -v
 ## Phase 4 — ActivityPub Federation
 
 ```
-Read AGENTS.md, SPEC.md, and PHASE_4.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_4.md.
 
 Phases 1–3 are complete. Local features and the theme switcher work.
 
@@ -227,7 +227,7 @@ curl "http://localhost:3000/nodeinfo/2.0"
 ## Phase 5 — Profiles, Moderation & Polish
 
 ```
-Read AGENTS.md, SPEC.md, and PHASE_5.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_5.md.
 
 Phases 1–4 are complete. Federation works.
 
@@ -244,7 +244,7 @@ After completing:
   cargo fmt && cargo clippy -- -D warnings && cargo test
 
 All must pass with zero errors and zero warnings.
-Verify the Definition of Done at the bottom of PHASE_5.md.
+Verify the Definition of Done at the bottom of docs/ai/PHASE_5.md.
 ```
 
 ---
@@ -300,4 +300,48 @@ as defined in theme.css. Remove hardcoded hex values.
 ```
 The file [filename] contains placeholder code (todo!/unimplemented!).
 All code must be real, working implementations. Complete it now.
+```
+
+---
+
+## Phase 6 — Admin Onboarding & Community Creation Eligibility
+
+```
+Read AGENTS.md, docs/ai/SPEC.md (Sections 3.5, 3.6, 3.7, and 4.11–4.13), and docs/ai/PHASE_6.md.
+
+Phases 1–5 are complete and the application federates correctly.
+
+Show me a plan before writing any code.
+
+Implement everything in PHASE_6.md in task order:
+
+Task 6.1 — First-run setup wizard
+  Critical: FirstRunGuard must NOT block /static/* or /setup* paths.
+  POST /setup must re-check is_first_run() — do not trust GET-time state.
+  Cache the is_first_run() result for max 60 seconds, bust it after setup.
+
+Task 6.2 — Email verification
+  Use Loco's built-in mailer. Use a mock mailer in test config.
+  Token must be a cryptographically random string (use uuid or rand crate),
+  not a predictable value.
+
+Task 6.3 — Standing score
+  standing_score is updated atomically: UPDATE users SET standing_score =
+  GREATEST(-100, standing_score + $delta) WHERE id = $id
+  The floor of -100 is enforced at the DB UPDATE level, not in Rust.
+
+Task 6.4 — Eligibility checker
+  All checks are additive — a user must pass ALL enabled checks.
+  Return human-readable reasons for each failed check.
+  Call this from both GET /c/new (show reasons in form) and POST /c/ (return 403).
+
+Task 6.5 — Admin eligibility settings dashboard
+  All settings read from DB on each request — no application restart needed.
+
+Tasks 6.6, 6.7, 6.8 — Admin user management, user-facing eligibility, tests.
+
+After completing all tasks:
+  cargo fmt && cargo clippy -- -D warnings && cargo test
+
+Verify the Phase 6 deliverables checklist when done.
 ```

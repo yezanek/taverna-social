@@ -2,6 +2,7 @@ use axum::http::StatusCode;
 use axum::{Extension, Form};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use loco_rs::prelude::*;
+use sea_orm::Set;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::instrument;
@@ -109,7 +110,30 @@ pub async fn register(
     )
     .await
     {
-        Ok(_) => Ok(format::redirect("/login").into_response()),
+        Ok(user) => {
+            let token = uuid::Uuid::new_v4().to_string();
+            let _ = crate::models::_entities::email_verifications::ActiveModel {
+                id: Set(uuid::Uuid::new_v4()),
+                user_id: Set(user.id),
+                token: Set(token.clone()),
+                expires_at: Set((chrono::Utc::now() + chrono::Duration::hours(24)).into()),
+                verified_at: Set(None),
+                created_at: Set(chrono::Utc::now().into()),
+            }
+            .insert(&ctx.db)
+            .await;
+
+            let _ = crate::mailers::verification::send_verification_email(
+                &ctx,
+                &form.email,
+                &form.username,
+                &token,
+                &base_url,
+            )
+            .await;
+
+            Ok(format::redirect("/login").into_response())
+        }
         Err(e) => {
             let error_msg = match e {
                 UserError::InvalidUsername(msg) => msg,

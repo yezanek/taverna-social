@@ -12,7 +12,9 @@ use loco_rs::{
 use migration::Migrator;
 
 use crate::common::config::TavernaConfig;
-use crate::controllers::{admin, auth, communities, federation, home, posts, theme, users};
+use crate::controllers::{
+    admin, auth, communities, federation, home, posts, setup, theme, users, verify,
+};
 use crate::initializers;
 use crate::initializers::theme_middleware::{CurrentTheme, extract_theme};
 use axum::Extension;
@@ -66,6 +68,8 @@ impl Hooks for App {
 
         let community_routes = loco_rs::controller::Routes::new()
             .add("/c/", get(communities::list))
+            .add("/c/new", get(communities::new_community_form))
+            .add("/c/", post(communities::create_community))
             .add("/c/{slug}", get(communities::feed))
             .add("/c/{slug}/new", get(communities::new_post_form))
             .add("/c/{slug}/posts", post(communities::create_post))
@@ -140,10 +144,30 @@ impl Hooks for App {
             )
             .add("/settings/password", post(users::change_password));
 
+        let setup_routes = loco_rs::controller::Routes::new()
+            .add("/setup", get(setup::wizard_form).post(setup::wizard_submit));
+
+        let verify_routes = loco_rs::controller::Routes::new()
+            .add("/verify-email", get(verify::verify_email))
+            .add("/resend-verification", post(verify::resend_verification));
+
         let admin_routes = loco_rs::controller::Routes::new()
             .add("/admin", get(admin::dashboard))
+            .add(
+                "/admin/settings",
+                get(admin::settings).post(admin::update_settings),
+            )
             .add("/admin/users/{username}/ban", post(admin::ban_user))
             .add("/admin/users/{username}/unban", post(admin::unban_user))
+            .add("/admin/users/{username}/suspend", post(admin::suspend_user))
+            .add(
+                "/admin/users/{username}/unsuspend",
+                post(admin::unsuspend_user),
+            )
+            .add(
+                "/admin/users/{username}/force-verify",
+                post(admin::force_verify_user),
+            )
             .add(
                 "/admin/communities/{slug}/delete",
                 post(admin::delete_community),
@@ -166,6 +190,8 @@ impl Hooks for App {
             .add("/comments/{id}", get(federation::notes::comment_note));
 
         AppRoutes::with_default_routes()
+            .add_route(setup_routes)
+            .add_route(verify_routes)
             .add_route(auth_routes)
             .add_route(theme_routes)
             .add_route(home_routes)
@@ -183,6 +209,10 @@ impl Hooks for App {
     async fn after_routes(router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
         let taverna_config = TavernaConfig::from_env()
             .map_err(|e| loco_rs::Error::string(&format!("Config error: {}", e)))?;
+
+        initializers::first_run::init(ctx.db.clone());
+
+        let router = router.layer(initializers::first_run::FirstRunLayer);
 
         let mut router = router.layer(axum::middleware::from_fn(
             initializers::content_negotiation::content_negotiation_middleware,

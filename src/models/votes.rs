@@ -75,6 +75,22 @@ impl VoteModel {
             ));
         }
 
+        let author_id = if let Some(pid) = post_id {
+            crate::models::posts::PostModel::find_by_id(db, pid)
+                .await
+                .ok()
+                .flatten()
+                .map(|p| p.author_id)
+        } else if let Some(cid) = comment_id {
+            crate::models::comments::CommentModel::find_by_id(db, cid)
+                .await
+                .ok()
+                .flatten()
+                .map(|c| c.author_id)
+        } else {
+            None
+        };
+
         let existing = if let Some(pid) = post_id {
             votes::Entity::find()
                 .filter(votes::Column::UserId.eq(user_id))
@@ -94,35 +110,49 @@ impl VoteModel {
                 .await?
         };
 
-        if let Some(existing_vote) = existing {
-            if existing_vote.value == value {
+        let (result, old_val) = if let Some(existing_vote) = existing {
+            let old = existing_vote.value;
+            if old == value {
                 votes::Entity::delete_by_id(existing_vote.id)
                     .exec(db)
                     .await?;
                 Self::recalculate_after_vote(db, post_id, comment_id).await?;
-                return Ok(VoteAction::Removed);
+                (VoteAction::Removed, old)
             } else {
                 let mut active: votes::ActiveModel = existing_vote.into();
                 active.value = Set(value);
                 active.update(db).await?;
                 Self::recalculate_after_vote(db, post_id, comment_id).await?;
-                return Ok(VoteAction::Changed);
+                (VoteAction::Changed, old)
             }
+        } else {
+            votes::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                user_id: Set(user_id),
+                post_id: Set(post_id),
+                comment_id: Set(comment_id),
+                value: Set(value),
+                created_at: Set(chrono::Utc::now().into()),
+            }
+            .insert(db)
+            .await?;
+
+            Self::recalculate_after_vote(db, post_id, comment_id).await?;
+            (VoteAction::Added, value)
+        };
+
+        if let Some(aid) = author_id
+            && aid != user_id
+        {
+            let delta = match result {
+                VoteAction::Added => value as i32,
+                VoteAction::Changed => (value - old_val) as i32,
+                VoteAction::Removed => -(old_val as i32),
+            };
+            let _ = crate::models::users::UserModel::update_standing(db, aid, delta).await;
         }
 
-        votes::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            user_id: Set(user_id),
-            post_id: Set(post_id),
-            comment_id: Set(comment_id),
-            value: Set(value),
-            created_at: Set(chrono::Utc::now().into()),
-        }
-        .insert(db)
-        .await?;
-
-        Self::recalculate_after_vote(db, post_id, comment_id).await?;
-        Ok(VoteAction::Added)
+        Ok(result)
     }
 
     async fn recalculate_after_vote(
