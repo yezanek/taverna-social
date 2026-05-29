@@ -96,11 +96,11 @@ Only proceed to the next phase when all gates pass and no CRITICAL issues remain
 ```
 You are a QA engineer reviewing Phase 1 of the Taverna project.
 
-Read AGENTS.md, SPEC.md, and PHASE_1.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_1.md.
 
 Then verify:
 
-DELIVERABLES — check every item in the PHASE_1.md deliverables checklist exists.
+DELIVERABLES — check every item in the docs/ai/PHASE_1.md deliverables checklist exists.
 
 DATABASE SCHEMA — open each migration file and verify:
 - users and communities tables have last_fetched_at TIMESTAMPTZ (required by activitypub_federation crate)
@@ -127,7 +127,7 @@ Report issues as CRITICAL (blocker), MEDIUM (should fix), or LOW (style).
 ```
 You are a QA engineer reviewing Phase 2 of the Taverna project.
 
-Read AGENTS.md, SPEC.md, and PHASE_2.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_2.md.
 
 Verify:
 
@@ -169,7 +169,7 @@ Report CRITICAL / MEDIUM / LOW.
 ```
 You are a QA engineer reviewing Phase 3 of the Taverna project.
 
-Read AGENTS.md, SPEC.md Section 3.5, and PHASE_3.md.
+Read AGENTS.md, docs/ai/SPEC.md Section 3.5, and docs/ai/PHASE_3.md.
 
 Verify:
 
@@ -232,7 +232,7 @@ Report CRITICAL / MEDIUM / LOW.
 ```
 You are a QA engineer reviewing Phase 4 of the Taverna project.
 
-Read AGENTS.md, SPEC.md Section 6, and PHASE_4.md.
+Read AGENTS.md, docs/ai/SPEC.md Section 6, and docs/ai/PHASE_4.md.
 
 Verify:
 
@@ -306,7 +306,7 @@ Report CRITICAL / MEDIUM / LOW.
 ```
 You are a QA engineer reviewing Phase 5 of the Taverna project.
 
-Read AGENTS.md, SPEC.md, and PHASE_5.md.
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_5.md.
 
 Verify:
 
@@ -350,7 +350,7 @@ Run: cargo test
 
 All must produce zero errors and zero warnings.
 
-Verify the Definition of Done checklist at the bottom of PHASE_5.md.
+Verify the Definition of Done checklist at the bottom of docs/ai/PHASE_5.md.
 
 Report CRITICAL / MEDIUM / LOW.
 ```
@@ -363,7 +363,7 @@ Use these for specific concerns at any point:
 
 **Security audit:**
 ```
-Read SPEC.md Section 7. Audit the entire src/ directory for:
+Read docs/ai/SPEC.md Section 7. Audit the entire src/ directory for:
 1. Any .unwrap() in non-test production code
 2. Any SQL string interpolation (not parameterized)
 3. Any user content rendered without ammonia sanitization
@@ -395,7 +395,7 @@ that is not inside a CSS var() call: report as MEDIUM.
 ```
 You are a QA engineer reviewing Phase 6 of the Taverna project.
 
-Read AGENTS.md, SPEC.md Sections 3.5–3.7 and 4.11–4.13, and PHASE_6.md.
+Read AGENTS.md, docs/ai/SPEC.md Sections 3.5–3.7 and 4.11–4.13, and docs/ai/PHASE_6.md.
 
 Verify:
 
@@ -814,7 +814,7 @@ You are performing a targeted audit of the Taverna codebase. This is a
 general health scan — not tied to any specific phase or feature. Your job
 is to find real problems in the existing code, not to verify planned features.
 
-Read SPEC.md and AGENTS.md first. Then work through the following areas.
+Read docs/ai/SPEC.md and AGENTS.md first. Then work through the following areas.
 Report every finding with: file path, line number if possible, severity
 (CRITICAL / MEDIUM / LOW), and a concrete description of the problem.
 
