@@ -246,7 +246,7 @@ mod tests {
                 .post("/login")
                 .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
-                    "email": "test@example.com",
+                    "identifier": "test@example.com",
                     "password": "password123",
                     "csrf_token": csrf,
                 }))
@@ -285,7 +285,7 @@ mod tests {
                 .post("/login")
                 .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
-                    "email": "test@example.com",
+                    "identifier": "test@example.com",
                     "password": "wrongpassword",
                     "csrf_token": csrf,
                 }))
@@ -308,7 +308,7 @@ mod tests {
                 .post("/login")
                 .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
-                    "email": "nobody@example.com",
+                    "identifier": "nobody@example.com",
                     "password": "password123",
                     "csrf_token": csrf,
                 }))
@@ -342,7 +342,7 @@ mod tests {
                 .post("/login")
                 .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
-                    "email": "test@example.com",
+                    "identifier": "test@example.com",
                     "password": "password123",
                     "csrf_token": csrf,
                 }))

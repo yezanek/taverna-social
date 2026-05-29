@@ -1,22 +1,63 @@
+mod common;
+
 #[cfg(test)]
 mod tests {
-    use loco_rs::testing::prelude::*;
+    use axum_extra::extract::cookie::Cookie;
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
     use serial_test::serial;
-    use taverna::app::App;
     use taverna::models::_entities::community_members;
     use taverna::models::communities::CommunityModel;
     use taverna::models::users::UserModel;
 
-    fn setup() {
-        dotenvy::dotenv().ok();
+    async fn seed_first_user(db: &sea_orm::DatabaseConnection) {
+        if UserModel::find_by_username(db, "admin")
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            UserModel::create_local(
+                db,
+                "admin",
+                "admin@taverna.local",
+                "password123",
+                "http://localhost:5150",
+            )
+            .await
+            .ok();
+        }
+    }
+
+    async fn get_csrf(server: &axum_test::TestServer, path: &str) -> String {
+        let resp = server.get(path).await;
+        resp.cookie("csrf_token").value().to_string()
+    }
+
+    async fn login(
+        server: &axum_test::TestServer,
+        identifier: &str,
+        password: &str,
+    ) -> Vec<Cookie<'static>> {
+        let csrf = get_csrf(server, "/login").await;
+        let resp = server
+            .post("/login")
+            .add_cookie(Cookie::new("csrf_token", csrf.clone()))
+            .form(&serde_json::json!({
+                "identifier": identifier,
+                "password": password,
+                "csrf_token": csrf,
+            }))
+            .await;
+        resp.cookies()
+            .iter()
+            .map(|c| Cookie::new(c.name().to_string(), c.value().to_string()))
+            .collect()
     }
 
     #[tokio::test]
     #[serial]
     async fn test_create_community_sets_ap_id() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -49,8 +90,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_duplicate_slug_fails() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -89,8 +129,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_creator_is_moderator() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -128,8 +167,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_join_community() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let creator = UserModel::create_local(
@@ -170,5 +208,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(role, Some("member".to_string()));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_communities_list_empty_state() {
+        let (request, ctx) = crate::common::test_server_and_ctx().await;
+        seed_first_user(&ctx.db).await;
+        let response = request.get("/c").await;
+        assert_eq!(response.status_code(), 200);
+        assert!(
+            response.text().contains("No communities yet"),
+            "empty list should show empty-state message"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_community_create_link_in_nav() {
+        let (request, ctx) = crate::common::test_server_and_ctx().await;
+        seed_first_user(&ctx.db).await;
+        let base_url = "http://localhost:5150";
+        UserModel::create_local(
+            &ctx.db,
+            "navuser",
+            "nav@example.com",
+            "password123",
+            base_url,
+        )
+        .await
+        .ok();
+        let cookies = login(&request, "navuser", "password123").await;
+        let mut get_req = request.get("/");
+        for c in &cookies {
+            get_req = get_req.add_cookie(c.clone());
+        }
+        let response = get_req.await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(
+            body.contains("/c/new"),
+            "home page for logged-in user should contain link to /c/new"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_new_community_page_renders() {
+        let (request, ctx) = crate::common::test_server_and_ctx().await;
+        seed_first_user(&ctx.db).await;
+        UserModel::create_local(
+            &ctx.db,
+            "renderuser",
+            "render@example.com",
+            "password123",
+            "http://localhost:5150",
+        )
+        .await
+        .ok();
+        let cookies = login(&request, "renderuser", "password123").await;
+        let mut get_req = request.get("/c/new");
+        for c in &cookies {
+            get_req = get_req.add_cookie(c.clone());
+        }
+        let response = get_req.await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(
+            body.contains("action=\"/c/\""),
+            "new community page should contain a form posting to /c/"
+        );
     }
 }

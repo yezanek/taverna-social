@@ -74,6 +74,14 @@ impl Initializer for RateLimiterInitializer {
     }
 
     async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
-        Ok(router.layer(middleware::from_fn(rate_limit_middleware)))
+        if std::env::var("RATE_LIMITING_ENABLED")
+            .ok()
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(true)
+        {
+            Ok(router.layer(middleware::from_fn(rate_limit_middleware)))
+        } else {
+            Ok(router)
+        }
     }
 }

@@ -1,7 +1,7 @@
 # How to Use opencode to Implement Taverna
 
 This file tells you exactly what to say to opencode to implement each phase.
-For the QA workflow using gemini-cli, see GEMINI_PROMPTS.md.
+For the QA workflow using gemini-cli, see docs/ai/GEMINI_PROMPTS.md.
 
 ---
 
@@ -344,4 +344,57 @@ After completing all tasks:
   cargo fmt && cargo clippy -- -D warnings && cargo test
 
 Verify the Phase 6 deliverables checklist when done.
+```
+
+---
+
+## Phase 7 — Bug Fixes & UX Improvements
+
+```
+Read AGENTS.md and docs/ai/PHASE_7.md.
+
+Phases 1–6 are complete. This phase fixes confirmed bugs and missing features
+found during early use. No new database tables. No federation changes.
+
+Show me a plan before writing any code.
+
+Work through the tasks in order. After each task run cargo check.
+
+Task 7.1 — Setup wizard styling
+  Extend base.html, pass hide_nav=true into context. Do NOT create a new layout.
+
+Task 7.2 — Empty communities list
+  list_all must return Ok(vec![]) not an error. Template must render an
+  empty-state message with a link to /c/new for logged-in users.
+
+Task 7.3 — New community page and nav link
+  Verify GET /c/new and POST /c/ routes are registered.
+  Add "+ New Community" link to base.html nav (logged-in users only).
+  Run eligibility check in the GET handler; pass eligible + reasons to template.
+
+Task 7.4 — Post type selector
+  Template change only — Text/Link tab using radio buttons.
+  The form must work without JavaScript (both fields present in DOM always).
+  No Rust changes needed.
+
+Task 7.5 — Post title link
+  Wrap post title in <a href="/c/{{ community.slug }}/posts/{{ post.id }}">.
+  Verify the route GET /c/:slug/posts/:id is registered and returns 200.
+
+Task 7.6 — Login by username or email
+  Change form field from email to identifier.
+  Handler: if identifier contains @ treat as email, else treat as username.
+  Error message must remain generic — never reveal which field was wrong.
+
+Task 7.7 — Admin communities table
+  Query communities with member_count and post_count computed in SQL.
+  Do NOT add these as permanent columns — compute in the admin query only.
+
+Task 7.8 — Tests
+  Write all tests listed in the PHASE_7.md deliverables.
+
+After all tasks:
+  cargo fmt && cargo clippy -- -D warnings && cargo test
+
+Verify the Phase 7 deliverables checklist when done.
 ```

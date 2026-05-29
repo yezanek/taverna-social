@@ -1,21 +1,16 @@
+mod common;
+
 #[cfg(test)]
 mod tests {
-    use loco_rs::testing::prelude::*;
     use serial_test::serial;
-    use taverna::app::App;
     use taverna::models::comments::CommentModel;
     use taverna::models::posts::PostModel;
     use taverna::models::users::UserModel;
 
-    fn setup() {
-        dotenvy::dotenv().ok();
-    }
-
     #[tokio::test]
     #[serial]
     async fn test_top_level_comment_path() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -64,8 +59,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reply_path_extends_parent() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -122,8 +116,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_nested_reply_path() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(

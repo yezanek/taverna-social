@@ -46,13 +46,14 @@ pub async fn wizard_form(
         .path("/")
         .build();
 
-    let response = helpers::render(
+    let response = helpers::render_with_theme(
         &v,
         "setup/wizard.html",
         json!({
             "csrf_token": csrf_token,
-            "theme": theme.0,
+            "hide_nav": true,
         }),
+        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }

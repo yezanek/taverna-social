@@ -459,6 +459,75 @@ Check these specific tests exist (MEDIUM if missing):
 Report CRITICAL / MEDIUM / LOW.
 ```
 
+
+---
+
+## Phase 7 QA Prompt
+
+```
+You are a QA engineer reviewing Phase 7 of the Taverna project.
+
+Read AGENTS.md and docs/ai/PHASE_7.md.
+
+Verify each fix:
+
+TASK 7.1 — Setup wizard styling
+- GET /setup response body must contain data-theme= attribute on the <html> element.
+- Response must contain <link rel="stylesheet" href="/static/theme.css">.
+- Response must NOT contain the nav bar (no <nav> element, or nav is hidden).
+- Must NOT reference a separate plain layout — must extend base.html.
+
+TASK 7.2 — Empty communities list
+- GET /c/ with zero communities in DB must return HTTP 200, not 500 or 404.
+- Response body must contain an empty-state message (e.g. "No communities yet").
+- For logged-in users, must contain a link to /c/new.
+- CommunityModel::list_all must return Ok(vec![]) not Err on empty result.
+
+TASK 7.3 — New community page and nav link
+- GET /c/new as a logged-in eligible user must return 200.
+- Response must contain a form with action="/c/" and fields: slug, name, description.
+- base.html must contain href="/c/new" inside an {% if current_user %} block.
+- Ineligible users seeing GET /c/new must see their eligibility reasons, not a 403.
+
+TASK 7.4 — Post type selector
+- GET /c/:slug/new (new post form) response body must contain:
+    name="post_type" (the radio selector)
+    name="url" (the link field)
+    name="body" (the text field)
+- Both fields must be present in the DOM (not conditionally omitted server-side).
+- Minimal onchange JS for cosmetic toggling is acceptable; core form must work
+  without JavaScript.
+
+TASK 7.5 — Post title links
+- GET /c/:slug feed response must contain:
+    <a href="/c/{slug}/posts/{id}"> wrapping the post title
+  for each post in the feed.
+- If post_card.html is a partial, check there too.
+- GET /c/:slug/posts/:id must return 200 for an existing post.
+- Route must be registered in src/app.rs.
+
+TASK 7.6 — Login by username or email
+- Login form must have input name="identifier", not name="email".
+- POST /login with a username (no @) must authenticate successfully.
+- POST /login with an email address must still authenticate successfully.
+- Failed login must return a generic error message — not "user not found"
+  or "wrong password" separately.
+- Check src/controllers/auth.rs: identifier containing @ → find_by_email,
+  otherwise → find_by_username.
+
+TASK 7.7 — Admin communities table
+- GET /admin as admin must return a table containing community data.
+- Table must include columns for: slug, name, member count, post count.
+- member_count and post_count must NOT be permanent columns on the
+  communities table — verify by checking migrations and the SeaORM entity.
+- Delete button must exist per community row.
+
+Run: cargo test (including tests/phase7_test.rs)
+Report any failing tests as CRITICAL.
+
+Report CRITICAL / MEDIUM / LOW.
+```
+
 ---
 
 ## Final Acceptance Test (run once, after all five phases are complete)

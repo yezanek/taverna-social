@@ -27,7 +27,7 @@ pub struct RegisterForm {
 /// Form data for user login.
 #[derive(Debug, Deserialize)]
 pub struct LoginForm {
-    pub email: String,
+    pub identifier: String,
     pub password: String,
     #[serde(default)]
     pub csrf_token: Option<String>,
@@ -195,9 +195,15 @@ pub async fn login(
         return Ok(StatusCode::FORBIDDEN.into_response());
     }
 
-    let user = UserModel::find_by_email(&ctx.db, &form.email)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let user = if form.identifier.contains('@') {
+        UserModel::find_by_email(&ctx.db, &form.identifier)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+    } else {
+        UserModel::find_by_username(&ctx.db, &form.identifier)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+    };
 
     let user = match user {
         Some(u) if UserModel::verify_password(&u, &form.password).await => u,

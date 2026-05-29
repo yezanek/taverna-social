@@ -1,0 +1,59 @@
+{% extends "layouts/base.html" %}
+{% block title %}Create a Community — Taverna{% endblock %}
+{% block content %}
+<div style="max-width:600px; margin:2rem auto;">
+  <h1 style="color:var(--text-primary)">Create a Community</h1>
+
+  {% if not eligible %}
+    <div class="card" style="border-left:4px solid var(--accent); padding:1rem;">
+      <p style="color:var(--text-primary); font-weight:bold">
+        You are not yet eligible to create communities.
+      </p>
+      <ul>
+        {% for reason in eligibility_reasons %}
+          <li style="color:var(--text-secondary)">{{ reason }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% else %}
+    <form method="POST" action="/c/">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label style="color:var(--text-primary)">
+        Slug (URL name, e.g. "rust-programming")
+        <input type="text" name="slug" required
+               pattern="[a-z0-9_-]{3,30}"
+               title="3–30 characters, lowercase letters, numbers, hyphens, underscores"
+               style="display:block; width:100%; margin-top:0.25rem;
+                      background:var(--bg-secondary); color:var(--text-primary);
+                      border:1px solid var(--border); border-radius:4px; padding:0.5rem;">
+      </label>
+      <br>
+      <label style="color:var(--text-primary)">
+        Display name
+        <input type="text" name="name" required
+               style="display:block; width:100%; margin-top:0.25rem;
+                      background:var(--bg-secondary); color:var(--text-primary);
+                      border:1px solid var(--border); border-radius:4px; padding:0.5rem;">
+      </label>
+      <br>
+      <label style="color:var(--text-primary)">
+        Description (markdown)
+        <textarea name="description" rows="4"
+                  style="display:block; width:100%; margin-top:0.25rem;
+                         background:var(--bg-secondary); color:var(--text-primary);
+                         border:1px solid var(--border); border-radius:4px; padding:0.5rem;"></textarea>
+      </label>
+      <br>
+      <label style="color:var(--text-primary)">
+        <input type="checkbox" name="is_nsfw" value="true"> Mark as NSFW
+      </label>
+      <br><br>
+      <button type="submit"
+              style="background:var(--accent); color:#fff; border:none;
+                     border-radius:4px; padding:0.6rem 1.5rem; cursor:pointer">
+        Create Community
+      </button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

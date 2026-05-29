@@ -1,21 +1,63 @@
+mod common;
+
 #[cfg(test)]
 mod tests {
-    use loco_rs::testing::prelude::*;
+    use axum_extra::extract::cookie::Cookie;
     use serial_test::serial;
-    use taverna::app::App;
+    use taverna::models::communities::CommunityModel;
     use taverna::models::posts::PostModel;
     use taverna::models::users::UserModel;
     use taverna::models::votes::VoteModel;
 
-    fn setup() {
-        dotenvy::dotenv().ok();
+    async fn seed_first_user(db: &sea_orm::DatabaseConnection) {
+        if UserModel::find_by_username(db, "admin")
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            UserModel::create_local(
+                db,
+                "admin",
+                "admin@taverna.local",
+                "password123",
+                "http://localhost:5150",
+            )
+            .await
+            .ok();
+        }
+    }
+
+    async fn get_csrf(server: &axum_test::TestServer, path: &str) -> String {
+        let resp = server.get(path).await;
+        resp.cookie("csrf_token").value().to_string()
+    }
+
+    async fn login(
+        server: &axum_test::TestServer,
+        identifier: &str,
+        password: &str,
+    ) -> Vec<Cookie<'static>> {
+        let csrf = get_csrf(server, "/login").await;
+        let resp = server
+            .post("/login")
+            .add_cookie(Cookie::new("csrf_token", csrf.clone()))
+            .form(&serde_json::json!({
+                "identifier": identifier,
+                "password": password,
+                "csrf_token": csrf,
+            }))
+            .await;
+        resp.cookies()
+            .iter()
+            .map(|c| Cookie::new(c.name().to_string(), c.value().to_string()))
+            .collect()
     }
 
     #[tokio::test]
     #[serial]
     async fn test_create_text_post() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -50,8 +92,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_create_link_post() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -84,8 +125,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_post_requires_body_or_url() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -114,8 +154,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_vote_up() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -160,8 +199,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_vote_flip() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -211,8 +249,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_vote_toggle_removes() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -262,8 +299,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_score_recalculates() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user1 = UserModel::create_local(
@@ -322,5 +358,147 @@ mod tests {
 
         let score = PostModel::recalculate_score(db, post.id).await.unwrap();
         assert_eq!(score, -2);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_new_post_has_type_selector() {
+        let (request, ctx) = crate::common::test_server_and_ctx().await;
+        seed_first_user(&ctx.db).await;
+        let base_url = "http://localhost:5150";
+        let user = UserModel::create_local(
+            &ctx.db,
+            "postuser",
+            "post@example.com",
+            "password123",
+            base_url,
+        )
+        .await
+        .unwrap();
+        let community = CommunityModel::create(
+            &ctx.db,
+            "test-community",
+            "Test Community",
+            None,
+            user.id,
+            base_url,
+        )
+        .await
+        .unwrap();
+        let cookies = login(&request, "postuser", "password123").await;
+        let path = format!("/c/{}/new", community.slug);
+        let mut get_req = request.get(&path);
+        for c in &cookies {
+            get_req = get_req.add_cookie(c.clone());
+        }
+        let response = get_req.await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(
+            body.contains("name=\"url\""),
+            "new post form should contain url input"
+        );
+        assert!(
+            body.contains("name=\"body\""),
+            "new post form should contain body textarea"
+        );
+        assert!(
+            body.contains("name=\"post_type\""),
+            "new post form should contain post_type radio buttons"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_post_title_is_a_link() {
+        let (request, ctx) = crate::common::test_server_and_ctx().await;
+        seed_first_user(&ctx.db).await;
+        let base_url = "http://localhost:5150";
+        let user = UserModel::create_local(
+            &ctx.db,
+            "linkuser",
+            "link@example.com",
+            "password123",
+            base_url,
+        )
+        .await
+        .unwrap();
+        let community = CommunityModel::create(
+            &ctx.db,
+            "link-comm",
+            "Link Community",
+            None,
+            user.id,
+            base_url,
+        )
+        .await
+        .unwrap();
+        let post = PostModel::create(
+            &ctx.db,
+            Some(community.id),
+            user.id,
+            "Clickable Title",
+            Some("Body text"),
+            None,
+            base_url,
+        )
+        .await
+        .unwrap();
+        let feed_path = format!("/c/{}", community.slug);
+        let response = request.get(&feed_path).await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        let expected = format!("/c/{}/posts/{}", community.slug, post.id);
+        assert!(
+            body.contains(&expected),
+            "feed should contain link to post detail: {}",
+            expected
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_post_detail_page_accessible() {
+        let (request, ctx) = crate::common::test_server_and_ctx().await;
+        seed_first_user(&ctx.db).await;
+        let base_url = "http://localhost:5150";
+        let user = UserModel::create_local(
+            &ctx.db,
+            "detailuser",
+            "detail@example.com",
+            "password123",
+            base_url,
+        )
+        .await
+        .unwrap();
+        let community = CommunityModel::create(
+            &ctx.db,
+            "detail-comm",
+            "Detail Community",
+            None,
+            user.id,
+            base_url,
+        )
+        .await
+        .unwrap();
+        let post = PostModel::create(
+            &ctx.db,
+            Some(community.id),
+            user.id,
+            "Detail Page Title",
+            Some("Detail body"),
+            None,
+            base_url,
+        )
+        .await
+        .unwrap();
+        let detail_path = format!("/c/{}/posts/{}", community.slug, post.id);
+        let response = request.get(&detail_path).await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(
+            body.contains("Detail Page Title"),
+            "post detail page should contain the post title"
+        );
     }
 }

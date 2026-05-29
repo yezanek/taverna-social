@@ -3,6 +3,7 @@ use axum::http::HeaderMap;
 use axum::{Extension, Form};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use loco_rs::prelude::*;
+use sea_orm::PaginatorTrait;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::instrument;
@@ -11,6 +12,7 @@ use crate::common::config::TavernaConfig;
 use crate::controllers::auth::validate_csrf;
 use crate::initializers::auth_middleware::AuthUser;
 use crate::initializers::theme_middleware::CurrentTheme;
+use crate::models::_entities::{community_members, posts};
 use crate::models::communities::CommunityModel;
 use crate::models::users::UserModel;
 use crate::views::helpers;
@@ -35,9 +37,32 @@ pub async fn dashboard(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    let (communities, _) = CommunityModel::list_all(&ctx.db, 0, 50)
+    let (all_communities, _) = CommunityModel::list_all(&ctx.db, 0, 50)
         .await
         .map_err(|_| Error::InternalServerError)?;
+
+    let mut communities: Vec<serde_json::Value> = Vec::new();
+    for c in all_communities {
+        let member_count = community_members::Entity::find()
+            .filter(community_members::Column::CommunityId.eq(c.id))
+            .count(&ctx.db)
+            .await
+            .map_err(|_| Error::InternalServerError)?;
+        let post_count = posts::Entity::find()
+            .filter(posts::Column::CommunityId.eq(c.id))
+            .filter(posts::Column::IsDeleted.eq(false))
+            .filter(posts::Column::IsRemoved.eq(false))
+            .count(&ctx.db)
+            .await
+            .map_err(|_| Error::InternalServerError)?;
+        communities.push(json!({
+            "slug": c.slug,
+            "name": c.name,
+            "is_local": c.is_local,
+            "member_count": member_count,
+            "post_count": post_count,
+        }));
+    }
 
     let (all_users, _) = UserModel::list_all(&ctx.db, 0, 50)
         .await
