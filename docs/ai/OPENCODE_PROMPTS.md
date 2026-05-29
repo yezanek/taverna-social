@@ -1,7 +1,7 @@
 # How to Use opencode to Implement Taverna
 
 This file tells you exactly what to say to opencode to implement each phase.
-For the QA workflow using gemini-cli, see GEMINI.md.
+For the QA workflow using gemini-cli, see GEMINI_PROMPTS.md.
 
 ---
 
