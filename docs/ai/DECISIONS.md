@@ -153,3 +153,68 @@ other state. The result is cached for 60 seconds per process to avoid a DB query
 on every request.
 
 **Do not use a setup_complete flag file or environment variable for this.**
+
+---
+
+## ADR-016: Config files use TOML, not YAML
+
+**Decision:** Loco configuration files are `config/development.toml` and
+`config/production.toml`, not `.yaml`.
+
+**Reason:** TOML is Rust's native configuration format, used by Cargo itself.
+It is unambiguous about types (no implicit string/number coercion), has no
+indentation-sensitivity foot-guns, and is what Loco supports natively. YAML's
+flexibility is a liability for config files that are read by tools and humans alike.
+
+**Do not add YAML config files. If loco new generates .yaml files, rename them.**
+
+---
+
+## ADR-017: Remote federated content lives in dedicated tables
+
+**Decision:** Content received from remote federated instances lives in
+`remote_actors`, `remote_posts`, and `remote_comments` — never in `users`,
+`posts`, or `comments`.
+
+**Reason:** Local content is authoritative and permanent. Remote content is a
+cache — it can go stale, it can be re-fetched, and it must be purgeable without
+any risk to local data. Mixing them in the same table makes expiry impossible
+without careful filtering, creates index bloat from mixed workloads, and makes
+it easy for a bug in the expiry worker to accidentally delete local content.
+Separation makes the invariant structural: the expiry worker operates only on
+`remote_*` tables by definition.
+
+**Do not insert remote content into the local posts, comments, or users tables.**
+
+---
+
+## ADR-018: Keyset (cursor) pagination everywhere, no OFFSET
+
+**Decision:** All paginated queries use cursor-based (keyset) pagination.
+`OFFSET N` is never used in feed or list queries.
+
+**Reason:** `OFFSET N` requires the database to scan and discard N rows before
+returning results. At page 100 with 25 items per page, this is 2,500 discarded
+rows per query. On a busy community feed this is measurable latency. Keyset
+pagination using `WHERE (score, published_at) < (cursor_score, cursor_time)`
+is O(log N) regardless of page depth, because it uses the index directly.
+
+**Do not introduce OFFSET-based pagination for any new endpoint.**
+
+---
+
+## ADR-019: Federation delivery is always async (never in request handlers)
+
+**Decision:** `SendActivityTask::send` is only called from background worker
+code (`src/workers/`). Request handlers enqueue to `outbound_activities` and
+return immediately.
+
+**Reason:** Remote HTTP requests are slow and unreliable. A community with
+1,000 followers across 200 instances would require 200 outbound HTTP requests
+per post. Doing this synchronously in a request handler would block the response
+for 10–30+ seconds and exhaust the web server's connection pool under any real
+load. The worker handles retries, backoff, and failure without affecting the
+user-facing response time.
+
+**No exceptions. Even for single-recipient activities (e.g. Accept{Follow}),
+enqueue rather than send inline.**

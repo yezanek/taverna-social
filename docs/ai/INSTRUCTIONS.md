@@ -45,6 +45,7 @@ taverna-social/                 ← git repo root
 │       ├── PHASE_5.md          ← profiles, moderation, production
 │       ├── PHASE_6.md          ← admin onboarding, email verification, eligibility
 │       ├── PHASE_7.md          ← bug fixes & UX improvements
+│       ├── PHASE_8.md          ← performance, scalability & federated content isolation
 │       ├── OPENCODE_PROMPTS.md ← prompts to paste into opencode (implementor)
 │       ├── GEMINI_PROMPTS.md   ← prompts to paste into gemini-cli (QA)
 │       └── taverna_design.docx ← full architecture design document

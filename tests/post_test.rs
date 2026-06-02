@@ -368,8 +368,8 @@ mod tests {
         let base_url = "http://localhost:5150";
         let user = UserModel::create_local(
             &ctx.db,
-            "postuser",
-            "post@example.com",
+            "selectoruser",
+            "selector@example.com",
             "password123",
             base_url,
         )
@@ -377,15 +377,15 @@ mod tests {
         .unwrap();
         let community = CommunityModel::create(
             &ctx.db,
-            "test-community",
-            "Test Community",
+            "selector-comm",
+            "Selector Comm",
             None,
             user.id,
             base_url,
         )
         .await
         .unwrap();
-        let cookies = login(&request, "postuser", "password123").await;
+        let cookies = login(&request, "selectoruser", "password123").await;
         let path = format!("/c/{}/new", community.slug);
         let mut get_req = request.get(&path);
         for c in &cookies {
@@ -416,8 +416,8 @@ mod tests {
         let base_url = "http://localhost:5150";
         let user = UserModel::create_local(
             &ctx.db,
-            "linkuser",
-            "link@example.com",
+            "linkuser2",
+            "link2@example.com",
             "password123",
             base_url,
         )
@@ -425,8 +425,8 @@ mod tests {
         .unwrap();
         let community = CommunityModel::create(
             &ctx.db,
-            "link-comm",
-            "Link Community",
+            "link-comm2",
+            "Link Community 2",
             None,
             user.id,
             base_url,

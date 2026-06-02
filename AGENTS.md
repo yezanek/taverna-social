@@ -33,8 +33,8 @@ You are implementing Taverna: a federated community platform (like Reddit + Face
 taverna/
 ├── Cargo.toml
 ├── config/
-│   ├── development.yaml
-│   └── production.yaml
+│   ├── development.toml
+│   └── production.toml
 ├── migration/
 │   └── src/
 │       ├── lib.rs
@@ -177,7 +177,7 @@ cargo fmt && cargo clippy -- -D warnings
 
 ## Environment Variables
 
-The following must be set in development (put in `.env` or `config/development.yaml`):
+The following must be set in development (put in `.env` or `config/development.toml`):
 
 ```
 DATABASE_URL=postgres://localhost/taverna_development

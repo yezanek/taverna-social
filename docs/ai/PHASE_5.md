@@ -135,9 +135,9 @@ Register a custom error handler in Axum that renders these templates for the cor
 
 ### Task 5.9 — Production configuration
 
-Update `config/production.yaml`:
+Update `config/production.toml`:
 
-```yaml
+```toml
 server:
   binding: 0.0.0.0
   port: 3000
@@ -236,7 +236,7 @@ test_full_happy_path()
 - [ ] Locked post enforcement
 - [ ] Banned user enforcement
 - [ ] Error pages (404, 403, 500)
-- [ ] `config/production.yaml` complete
+- [ ] `config/production.toml` complete
 - [ ] `DEPLOY.md` written
 - [ ] `cargo check` passes
 - [ ] `cargo test` passes (all tests including new ones)

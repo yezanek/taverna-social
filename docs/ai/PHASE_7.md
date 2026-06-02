@@ -426,33 +426,123 @@ LIMIT $1 OFFSET $2
 
 ---
 
+## Task 7.9 — Admin dashboard link in nav
+
+**Problem:** There is no link to the admin dashboard in the navigation bar,
+even when logged in as an admin. Admins must navigate to `/admin` manually.
+
+**Fix:**
+
+In `views/layouts/base.html`, add an admin link visible only to admin users:
+
+```html
+{% if current_user %}
+  <a href="/c/new" style="color:var(--nav-text)">+ New Community</a>
+  {% if current_user.is_admin %}
+    <a href="/admin"
+       style="color:var(--nav-text); border:1px solid var(--nav-text);
+              border-radius:4px; padding:0.2rem 0.6rem; font-size:0.85rem;">
+      ⚙ Admin
+    </a>
+  {% endif %}
+{% endif %}
+```
+
+The `current_user` variable must expose `is_admin`. Verify the Tera context
+includes this field — if `current_user` is a struct serialised to JSON, SeaORM
+entities include all columns by default, so `is_admin` should already be present.
+
+Add to the admin_test.rs tests described in Task 7.8.
+
 ## Task 7.8 — Tests
 
-Phase 7 tests are integrated into existing test files to maintain logical grouping:
+Tests belong in the file that owns the domain being tested, not a shared phase file.
 
-- `tests/setup_test.rs`: `test_setup_page_uses_base_layout`
-- `tests/community_test.rs`: `test_communities_list_empty_state`, `test_community_create_link_in_nav`, `test_new_community_page_renders`
-- `tests/post_test.rs`: `test_new_post_has_type_selector`, `test_post_title_is_a_link`, `test_post_detail_page_accessible`
-- `tests/auth_test.rs`: `test_login_success` (verified with username identifier)
-- `tests/admin_test.rs`: `test_admin_dashboard_shows_communities`
+**tests/auth_test.rs** — add:
+```rust
+// Login by username
+test_login_with_username()
+  // POST /login with identifier=username (not email) must succeed and set cookies
+
+// Login by email still works after the identifier change
+test_login_with_email_still_works()
+  // POST /login with identifier=email@example.com must still succeed
+```
+
+**tests/community_test.rs** — add:
+```rust
+// Empty communities list returns 200
+test_communities_list_empty_state()
+  // GET /c/ with no communities must return 200
+  // Response body must contain "No communities yet" or equivalent
+
+// New community page accessible to eligible user
+test_new_community_page_renders()
+  // GET /c/new as logged-in eligible user must return 200
+  // Response must contain a form with action="/c/"
+```
+
+**tests/post_test.rs** — add:
+```rust
+// Post type selector present in new post form
+test_new_post_has_type_selector()
+  // GET /c/:slug/new as member must return 200
+  // Response body must contain name="url", name="body", name="post_type"
+
+// Post titles link to post detail
+test_post_title_is_a_link()
+  // GET /c/:slug feed must contain <a href="/c/:slug/posts/:id"> for each post
+
+// Post detail page is accessible
+test_post_detail_page_accessible()
+  // GET /c/:slug/posts/:id must return 200 and contain the post title
+```
+
+**tests/admin_test.rs** — add (create file if it does not exist):
+```rust
+// Admin dashboard shows communities section
+test_admin_dashboard_shows_communities()
+  // GET /admin as admin must contain a community table
+  // Must list at least one community if one exists in DB
+
+// Admin nav link visible when logged in as admin
+test_admin_link_visible_for_admin()
+  // GET / as admin user must contain href="/admin" in the response body
+
+// Admin nav link not visible for non-admin
+test_admin_link_hidden_for_regular_user()
+  // GET / as regular user must NOT contain href="/admin"
+```
+
+**tests/setup_test.rs** — add (or add to existing Phase 6 setup tests):
+```rust
+// Setup page uses theme system
+test_setup_page_uses_base_layout()
+  // GET /setup response must contain data-theme= on <html>
+  // Must contain <link rel="stylesheet" href="/static/theme.css">
+  // Must NOT contain the nav bar (hide_nav=true removes it)
+```
 
 ---
 
 ## Deliverables Checklist
 
-- [x] Setup wizard extends `base.html`, uses `data-theme`, hides nav via `hide_nav`
-- [x] `GET /c/` returns 200 with empty-state message when no communities exist
-- [x] `GET /c/new` renders the new community form (with eligibility check)
-- [x] `+ New Community` link visible in nav for logged-in users
-- [x] New post form has Text / Link tab selector
-- [x] Post titles in feed are clickable anchor tags linking to post detail
-- [x] `GET /c/:slug/posts/:id` returns 200 (verify route is registered)
-- [x] Login form field is `identifier` (username or email), not `email`
-- [x] `POST /login` resolves identifier as username if no `@`, email if contains `@`
-- [x] Admin dashboard includes communities table with member/post counts
-- [x] All integrated tests pass
-- [x] `cargo check`, `cargo clippy -- -D warnings`, `cargo fmt` all pass
- 
+- [ ] Setup wizard extends `base.html`, uses `data-theme`, hides nav via `hide_nav`
+- [ ] `GET /c/` returns 200 with empty-state message when no communities exist
+- [ ] `GET /c/new` renders the new community form (with eligibility check)
+- [ ] `+ New Community` link visible in nav for logged-in users
+- [ ] New post form has Text / Link tab selector
+- [ ] Post titles in feed are clickable anchor tags linking to post detail
+- [ ] `GET /c/:slug/posts/:id` returns 200 (verify route is registered)
+- [ ] Login form field is `identifier` (username or email), not `email`
+- [ ] `POST /login` resolves identifier as username if no `@`, email if contains `@`
+- [ ] Admin dashboard includes communities table with member/post counts
+- [ ] Admin nav link (⚙ Admin) visible in nav bar when logged in as admin
+- [ ] Admin nav link not visible to non-admin users
+- [ ] New tests added to their semantic test files (auth_test.rs, community_test.rs, post_test.rs, admin_test.rs, setup_test.rs)
+- [ ] `cargo test` passes
+- [ ] `cargo check`, `cargo clippy -- -D warnings`, `cargo fmt` all pass
+
 ---
 
 ## Common Mistakes

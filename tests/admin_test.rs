@@ -59,6 +59,7 @@ mod tests {
                 "password": password,
                 "csrf_token": csrf,
             }))
+            .save_cookies()
             .await;
         resp.cookies()
             .iter()
@@ -105,6 +106,46 @@ mod tests {
         assert!(
             body.contains("post_count") || body.contains("Posts"),
             "admin dashboard should show post count column"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_admin_link_visible_for_admin() {
+        let (request, ctx) = crate::common::test_server_and_ctx().await;
+        seed_admin_user(&ctx.db).await;
+        let _ = login(&request, "admin", "password123").await;
+        let response = request.get("/").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(
+            body.contains(r#"href="/admin""#),
+            "admin user should see the admin nav link"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_admin_link_hidden_for_regular_user() {
+        let (request, ctx) = crate::common::test_server_and_ctx().await;
+        seed_admin_user(&ctx.db).await;
+        let base_url = "http://localhost:5150";
+        UserModel::create_local(
+            &ctx.db,
+            "regularuser",
+            "regular@example.com",
+            "password123",
+            base_url,
+        )
+        .await
+        .unwrap();
+        let _ = login(&request, "regularuser", "password123").await;
+        let response = request.get("/").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(
+            !body.contains(r#"href="/admin""#),
+            "regular user should not see the admin nav link"
         );
     }
 }

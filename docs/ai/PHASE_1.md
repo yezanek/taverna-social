@@ -75,8 +75,8 @@ Register all migrations in `migration/src/lib.rs`.
 
 ### Task 1.4 — Configure development database
 
-Update `config/development.yaml`:
-```yaml
+Update `config/development.toml` (Loco supports TOML natively — rename from `.yaml` if it was generated as such):
+```toml
 database:
   uri: postgres://localhost/taverna_development
   enable_logging: true
@@ -151,7 +151,7 @@ Before marking Phase 1 complete, verify ALL of these exist:
 - [ ] `Cargo.toml` with all dependencies from AGENTS.md
 - [ ] `migration/src/m001_extensions.rs` through `m006_federation.rs`
 - [ ] `migration/src/lib.rs` registering all 6 migrations
-- [ ] `config/development.yaml` with database URI and taverna config section
+- [ ] `config/development.toml` with database URI and taverna config section
 - [ ] `src/models/_entities/` directory with generated SeaORM entity files
 - [ ] `cargo check` passes with zero errors
 - [ ] `cargo loco db migrate` runs without errors
