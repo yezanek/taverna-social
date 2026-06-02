@@ -1,22 +1,17 @@
+mod common;
+
 #[cfg(test)]
 mod tests {
-    use loco_rs::testing::prelude::*;
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
     use serial_test::serial;
-    use taverna::app::App;
     use taverna::models::_entities::{email_verifications, instance_settings, users};
     use taverna::models::eligibility;
     use taverna::models::users::UserModel;
 
-    fn setup() {
-        dotenvy::dotenv().ok();
-    }
-
     #[tokio::test]
     #[serial]
     async fn test_update_standing() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -58,8 +53,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_eligibility_all_checks_pass() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -80,8 +74,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_eligibility_email_not_verified() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mut settings: instance_settings::ActiveModel = instance_settings::Entity::find()
@@ -118,8 +111,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_eligibility_email_verified_passes() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mut settings: instance_settings::ActiveModel = instance_settings::Entity::find()
@@ -159,8 +151,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_eligibility_standing_too_low() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mut settings: instance_settings::ActiveModel = instance_settings::Entity::find()
@@ -193,8 +184,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_eligibility_suspended() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mut settings: instance_settings::ActiveModel = instance_settings::Entity::find()
@@ -228,8 +218,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_eligibility_gated_without_check_requirements() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mut settings: instance_settings::ActiveModel = instance_settings::Entity::find()
@@ -260,8 +249,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_eligibility_gated_requires_email_verified() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mut settings: instance_settings::ActiveModel = instance_settings::Entity::find()
@@ -298,8 +286,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_email_verification_create_and_verify() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -358,8 +345,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_force_verify_email() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -387,8 +373,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_account_age_gate() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mut settings: instance_settings::ActiveModel = instance_settings::Entity::find()
@@ -421,8 +406,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_expired_token_rejected() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -461,8 +445,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_removed_content_disqualifies() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mut settings: instance_settings::ActiveModel = instance_settings::Entity::find()
@@ -524,8 +507,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_set_suspended() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(

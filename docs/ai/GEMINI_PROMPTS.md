@@ -340,7 +340,7 @@ DEPLOY.md EXISTS
   migration command, Caddy example, admin setup, AGPL-3.0 license note.
 
 PRODUCTION CONFIG
-- config/production.yaml uses ${BASE_URL} and ${TAVERNA_DOMAIN} (env var interpolation).
+- config/production.toml uses ${BASE_URL} and ${TAVERNA_DOMAIN} (env var interpolation).
 - Not hardcoded URLs.
 
 FINAL CHECKS
@@ -455,6 +455,168 @@ Check these specific tests exist (MEDIUM if missing):
 - test_upvote_increases_standing
 - test_vote_removal_reverses_delta
 - test_expired_token_rejected
+
+Report CRITICAL / MEDIUM / LOW.
+```
+
+
+---
+
+## Phase 7 QA Prompt
+
+```
+You are a QA engineer reviewing Phase 7 of the Taverna project.
+
+Read AGENTS.md and docs/ai/PHASE_7.md.
+
+Verify each fix:
+
+TASK 7.1 — Setup wizard styling
+- GET /setup response body must contain data-theme= attribute on the <html> element.
+- Response must contain <link rel="stylesheet" href="/static/theme.css">.
+- Response must NOT contain the nav bar (no <nav> element, or nav is hidden).
+- Must NOT reference a separate plain layout — must extend base.html.
+
+TASK 7.2 — Empty communities list
+- GET /c/ with zero communities in DB must return HTTP 200, not 500 or 404.
+- Response body must contain an empty-state message (e.g. "No communities yet").
+- For logged-in users, must contain a link to /c/new.
+- CommunityModel::list_all must return Ok(vec![]) not Err on empty result.
+
+TASK 7.3 — New community page and nav link
+- GET /c/new as a logged-in eligible user must return 200.
+- Response must contain a form with action="/c/" and fields: slug, name, description.
+- base.html must contain href="/c/new" inside an {% if current_user %} block.
+- Ineligible users seeing GET /c/new must see their eligibility reasons, not a 403.
+
+TASK 7.4 — Post type selector
+- GET /c/:slug/new (new post form) response body must contain:
+    name="post_type" (the radio selector)
+    name="url" (the link field)
+    name="body" (the text field)
+- Both fields must be present in the DOM (not conditionally omitted server-side).
+- Minimal onchange JS for cosmetic toggling is acceptable; core form must work
+  without JavaScript.
+
+TASK 7.5 — Post title links
+- GET /c/:slug feed response must contain:
+    <a href="/c/{slug}/posts/{id}"> wrapping the post title
+  for each post in the feed.
+- If post_card.html is a partial, check there too.
+- GET /c/:slug/posts/:id must return 200 for an existing post.
+- Route must be registered in src/app.rs.
+
+TASK 7.6 — Login by username or email
+- Login form must have input name="identifier", not name="email".
+- POST /login with a username (no @) must authenticate successfully.
+- POST /login with an email address must still authenticate successfully.
+- Failed login must return a generic error message — not "user not found"
+  or "wrong password" separately.
+- Check src/controllers/auth.rs: identifier containing @ → find_by_email,
+  otherwise → find_by_username.
+
+TASK 7.9 — Admin nav link
+- GET / as admin user response body must contain href="/admin".
+- GET / as non-admin user response body must NOT contain href="/admin".
+- The admin link must be inside a {% if current_user.is_admin %} block in base.html.
+
+TASK 7.7 — Admin communities table
+- GET /admin as admin must return a table containing community data.
+- Table must include columns for: slug, name, member count, post count.
+- member_count and post_count must NOT be permanent columns on the
+  communities table — verify by checking migrations and the SeaORM entity.
+- Delete button must exist per community row.
+
+Run: cargo test
+Tests must be in their semantic files: auth_test.rs, community_test.rs,
+post_test.rs, admin_test.rs, setup_test.rs — not a monolithic phase7_test.rs.
+Report any failing tests as CRITICAL.
+
+Report CRITICAL / MEDIUM / LOW.
+```
+
+
+---
+
+## Phase 8 QA Prompt
+
+```
+You are a QA engineer reviewing Phase 8 of the Taverna project.
+
+Read AGENTS.md and docs/ai/PHASE_8.md.
+
+PART A — Federated content isolation
+
+A1. remote_* tables exist
+    Run: \dt in psql against the database.
+    Must find: remote_actors, remote_posts, remote_comments.
+    Must NOT find: federation_objects (should be dropped).
+
+A2. users table is local-only
+    Run: SELECT COUNT(*) FROM users WHERE is_local = false;
+    Must return 0. If any remote users remain in users: CRITICAL.
+
+A3. Incoming federation writes to remote tables
+    Open all ActivityHandler::receive implementations.
+    Create{Note} from a remote actor must INSERT into remote_posts, not posts.
+    If any remote content is inserted into posts or comments: CRITICAL.
+
+A4. community_feed view exists and is correct
+    Run: \dv in psql. Must find community_feed.
+    Run: SELECT origin, COUNT(*) FROM community_feed GROUP BY origin;
+    Must show both 'local' and 'remote' rows (if remote posts exist).
+
+A5. Expiry worker does not touch local content
+    Review src/workers/expire_remote_cache.rs.
+    DELETE statements must only reference remote_posts, remote_comments,
+    remote_actors — never posts, comments, or users.
+    If any local table is touched: CRITICAL.
+
+A6. Shared inbox deduplication
+    Open get_follower_inboxes_deduplicated.
+    Must prefer shared_inbox_url over inbox_url when non-null.
+    Must deduplicate — HashSet or equivalent.
+    If it returns one URL per follower without deduplication: MEDIUM.
+
+PART B — Performance
+
+B1. No SendActivityTask::send in handlers
+    grep -rn "SendActivityTask::send" src/controllers/ src/models/
+    Any match is CRITICAL. Only src/workers/ may call SendActivityTask::send.
+
+B2. No OFFSET pagination
+    grep -rn "offset\|OFFSET\|\.paginate(" src/models/ src/controllers/
+    Any paginate() or OFFSET in feed queries: CRITICAL.
+    Cursor-based pagination must be used for all feeds.
+
+B3. Connection pool config
+    Open config/production.toml.
+    max_connections must be >= 50.
+    min_connections must be >= 10.
+    If defaults (typically 5/1) are unchanged: MEDIUM.
+
+B4. Performance indexes exist
+    Run in psql:
+      SELECT indexname FROM pg_indexes
+      WHERE tablename IN ('posts','remote_posts','votes','follows','comments')
+      ORDER BY tablename, indexname;
+    Check for:
+      idx_posts_community_score (partial: not deleted/removed)
+      idx_votes_user_post (partial: post_id not null)
+      idx_follows_community_accepted (partial: accepted=true)
+    Missing any: MEDIUM.
+
+B5. Test file naming
+    ls tests/
+    Must NOT contain phase8_test.rs.
+    New tests must be in federation_test.rs, post_test.rs, performance_test.rs.
+    If phase8_test.rs exists: MEDIUM — reorganise into semantic files.
+
+Run: cargo test
+Report any failures as CRITICAL.
+
+Run: cargo clippy -- -D warnings
+Report any warnings as MEDIUM.
 
 Report CRITICAL / MEDIUM / LOW.
 ```
@@ -745,7 +907,7 @@ AREA 9 — Deployment readiness
 - Migration command: ./target/release/taverna-cli db migrate
 - AGPL-3.0 license note (required by activitypub_federation dependency)
 
-9b. config/production.yaml uses ${BASE_URL} and ${TAVERNA_DOMAIN}
+9b. config/production.toml uses ${BASE_URL} and ${TAVERNA_DOMAIN}
     (environment variable interpolation, not hardcoded values)
 
 9c. cargo deny check licenses passes (run it and report result)

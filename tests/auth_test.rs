@@ -246,7 +246,7 @@ mod tests {
                 .post("/login")
                 .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
-                    "email": "test@example.com",
+                    "identifier": "test@example.com",
                     "password": "password123",
                     "csrf_token": csrf,
                 }))
@@ -285,7 +285,7 @@ mod tests {
                 .post("/login")
                 .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
-                    "email": "test@example.com",
+                    "identifier": "test@example.com",
                     "password": "wrongpassword",
                     "csrf_token": csrf,
                 }))
@@ -308,7 +308,7 @@ mod tests {
                 .post("/login")
                 .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
-                    "email": "nobody@example.com",
+                    "identifier": "nobody@example.com",
                     "password": "password123",
                     "csrf_token": csrf,
                 }))
@@ -316,6 +316,82 @@ mod tests {
             assert_eq!(response.status_code(), 200);
             let body = response.text();
             assert!(body.contains("Invalid credentials"));
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_login_with_username() {
+        setup();
+        request::<App, _, _>(|request, ctx| async move {
+            seed_first_user(&ctx.db).await;
+            let base_url = "http://localhost:5150";
+            UserModel::create_local(
+                &ctx.db,
+                "testuser",
+                "test@example.com",
+                "password123",
+                base_url,
+            )
+            .await
+            .unwrap();
+
+            let csrf = get_csrf(&request, "/login").await;
+            let response = request
+                .post("/login")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
+                .form(&serde_json::json!({
+                    "identifier": "testuser",
+                    "password": "password123",
+                    "csrf_token": csrf,
+                }))
+                .await;
+            assert!(response.status_code() == 302 || response.status_code() == 303);
+            let loc_hdr = response.header("location");
+            assert_eq!(loc_hdr.to_str().unwrap(), "/");
+            let cookies = response.cookies();
+            let access_cookie = cookies.iter().find(|c| c.name() == "access_token");
+            assert!(access_cookie.is_some());
+            let refresh_cookie = cookies.iter().find(|c| c.name() == "refresh_token");
+            assert!(refresh_cookie.is_some());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_login_with_email_still_works() {
+        setup();
+        request::<App, _, _>(|request, ctx| async move {
+            seed_first_user(&ctx.db).await;
+            let base_url = "http://localhost:5150";
+            UserModel::create_local(
+                &ctx.db,
+                "emailuser",
+                "email@example.com",
+                "password123",
+                base_url,
+            )
+            .await
+            .unwrap();
+
+            let csrf = get_csrf(&request, "/login").await;
+            let response = request
+                .post("/login")
+                .add_cookie(Cookie::new("csrf_token", &csrf))
+                .form(&serde_json::json!({
+                    "identifier": "email@example.com",
+                    "password": "password123",
+                    "csrf_token": csrf,
+                }))
+                .await;
+            assert!(response.status_code() == 302 || response.status_code() == 303);
+            let loc_hdr = response.header("location");
+            assert_eq!(loc_hdr.to_str().unwrap(), "/");
+            let cookies = response.cookies();
+            let access_cookie = cookies.iter().find(|c| c.name() == "access_token");
+            assert!(access_cookie.is_some());
         })
         .await;
     }
@@ -342,7 +418,7 @@ mod tests {
                 .post("/login")
                 .add_cookie(Cookie::new("csrf_token", &csrf))
                 .form(&serde_json::json!({
-                    "email": "test@example.com",
+                    "identifier": "test@example.com",
                     "password": "password123",
                     "csrf_token": csrf,
                 }))

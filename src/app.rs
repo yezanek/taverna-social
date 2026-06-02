@@ -67,9 +67,9 @@ impl Hooks for App {
         let home_routes = loco_rs::controller::Routes::new().add("/", get(home::index));
 
         let community_routes = loco_rs::controller::Routes::new()
-            .add("/c/", get(communities::list))
+            .add("/c", get(communities::list))
             .add("/c/new", get(communities::new_community_form))
-            .add("/c/", post(communities::create_community))
+            .add("/c", post(communities::create_community))
             .add("/c/{slug}", get(communities::feed))
             .add("/c/{slug}/new", get(communities::new_post_form))
             .add("/c/{slug}/posts", post(communities::create_post))

@@ -1,23 +1,18 @@
+mod common;
+
 #[cfg(test)]
 mod tests {
-    use loco_rs::testing::prelude::*;
     use sea_orm::EntityTrait;
     use serial_test::serial;
-    use taverna::app::App;
     use taverna::models::_entities::users;
     use taverna::models::posts::PostModel;
     use taverna::models::users::UserModel;
     use taverna::models::votes::VoteModel;
 
-    fn setup() {
-        dotenvy::dotenv().ok();
-    }
-
     #[tokio::test]
     #[serial]
     async fn test_upvote_increases_standing() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let voter = UserModel::create_local(
@@ -66,8 +61,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_downvote_decreases_standing() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let voter = UserModel::create_local(
@@ -116,8 +110,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_vote_removal_reverses_delta() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let voter = UserModel::create_local(
@@ -177,8 +170,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_moderation_removal_deducts_standing() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(

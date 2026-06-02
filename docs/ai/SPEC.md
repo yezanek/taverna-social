@@ -582,23 +582,27 @@ See PHASE_4.md for full implementation details and `ActivityHandler` implementat
 
 ## 8. Configuration
 
-```yaml
-# config/production.yaml
-server:
-  binding: 0.0.0.0
-  port: 3000
-database:
-  min_connections: 5
-  max_connections: 50
-taverna:
-  domain: "${TAVERNA_DOMAIN}"
-  base_url: "${BASE_URL}"
-  federation:
-    enabled: true
-    blocked_domains: []
-workers:
-  deliver_activity:
-    concurrency: 8
+```toml
+# config/production.toml
+
+[server]
+binding = "0.0.0.0"
+port = 3000
+
+[database]
+min_connections = 5
+max_connections = 50
+
+[taverna]
+domain = "${TAVERNA_DOMAIN}"
+base_url = "${BASE_URL}"
+
+[taverna.federation]
+enabled = true
+blocked_domains = []
+
+[workers.deliver_activity]
+concurrency = 8
 ```
 
 ---

@@ -13,7 +13,12 @@
   </div>
 {% endfor %}
 {% else %}
-<p>No communities yet — create one!</p>
+<div class="card" style="text-align:center; padding:3rem;">
+  <p style="color:var(--text-secondary)">No communities yet.</p>
+  {% if current_user %}
+    <a href="/c/new" style="color:var(--accent)">Create the first one →</a>
+  {% endif %}
+</div>
 {% endif %}
 </div>
 {% endblock %}

@@ -1,7 +1,7 @@
 # How to Use opencode to Implement Taverna
 
 This file tells you exactly what to say to opencode to implement each phase.
-For the QA workflow using gemini-cli, see GEMINI_PROMPTS.md.
+For the QA workflow using gemini-cli, see docs/ai/GEMINI_PROMPTS.md.
 
 ---
 
@@ -344,4 +344,132 @@ After completing all tasks:
   cargo fmt && cargo clippy -- -D warnings && cargo test
 
 Verify the Phase 6 deliverables checklist when done.
+```
+
+---
+
+## Phase 7 — Bug Fixes & UX Improvements
+
+```
+Read AGENTS.md and docs/ai/PHASE_7.md.
+
+Phases 1–6 are complete. This phase fixes confirmed bugs and missing features
+found during early use. No new database tables. No federation changes.
+
+Show me a plan before writing any code.
+
+Work through the tasks in order. After each task run cargo check.
+
+Task 7.1 — Setup wizard styling
+  Extend base.html, pass hide_nav=true into context. Do NOT create a new layout.
+
+Task 7.2 — Empty communities list
+  list_all must return Ok(vec![]) not an error. Template must render an
+  empty-state message with a link to /c/new for logged-in users.
+
+Task 7.3 — New community page and nav link
+  Verify GET /c/new and POST /c/ routes are registered.
+  Add "+ New Community" link to base.html nav (logged-in users only).
+  Run eligibility check in the GET handler; pass eligible + reasons to template.
+
+Task 7.4 — Post type selector
+  Template change only — Text/Link tab using radio buttons.
+  The form must work without JavaScript (both fields present in DOM always).
+  No Rust changes needed.
+
+Task 7.5 — Post title link
+  Wrap post title in <a href="/c/{{ community.slug }}/posts/{{ post.id }}">.
+  Verify the route GET /c/:slug/posts/:id is registered and returns 200.
+
+Task 7.6 — Login by username or email
+  Change form field from email to identifier.
+  Handler: if identifier contains @ treat as email, else treat as username.
+  Error message must remain generic — never reveal which field was wrong.
+
+Task 7.7 — Admin communities table
+  Query communities with member_count and post_count computed in SQL.
+  Do NOT add these as permanent columns — compute in the admin query only.
+
+Task 7.9 — Admin nav link
+  Add ⚙ Admin link in base.html nav, inside {% if current_user.is_admin %}.
+  Verify current_user.is_admin is available in the Tera context.
+
+Task 7.8 — Tests
+  Add tests to their semantic files — do NOT create tests/phase7_test.rs.
+  auth_test.rs: test_login_with_username, test_login_with_email_still_works
+  community_test.rs: test_communities_list_empty_state, test_new_community_page_renders
+  post_test.rs: test_new_post_has_type_selector, test_post_title_is_a_link, test_post_detail_page_accessible
+  admin_test.rs: test_admin_dashboard_shows_communities, test_admin_link_visible_for_admin, test_admin_link_hidden_for_regular_user
+  setup_test.rs: test_setup_page_uses_base_layout
+
+After all tasks:
+  cargo fmt && cargo clippy -- -D warnings && cargo test
+
+Verify the Phase 7 deliverables checklist when done.
+```
+
+---
+
+## Phase 8 — Performance, Scalability & Federated Content Isolation
+
+```
+Read AGENTS.md and docs/ai/PHASE_8.md completely before writing any code.
+
+Phases 1–7 are complete.
+
+This phase has two parts: (A) splitting federated content into dedicated tables,
+and (B) fixing performance bottlenecks. Show me a plan before starting any task.
+
+PART A — Federated content isolation (tasks 8.1–8.5, 8.8, 8.9)
+
+Task 8.1 — Migration m009
+  Create remote_actors, remote_posts, remote_comments tables exactly as specified.
+  Migrate remote users from users table to remote_actors.
+  Drop federation_objects table.
+  Show me the full migration SQL before running it.
+
+Task 8.2 — Migration m010
+  Add all performance indexes from Part B1 of PHASE_8.md.
+
+Task 8.3 — Update ActivityHandler implementations
+  All incoming remote content writes to remote_posts / remote_comments.
+  Verify no remote content is inserted into the local posts or comments tables.
+
+Task 8.4 — Update Object/Actor trait implementations
+  Local users → users table. Remote actors → remote_actors table.
+  Two separate Rust types: DbUser (local) and RemoteActor (remote).
+
+Task 8.5 — community_feed SQL view
+  Create the UNION ALL view as specified. Update feed handlers to use it.
+
+Task 8.8 — Shared inbox deduplication
+  Implement get_follower_inboxes_deduplicated.
+  Replace all direct inbox-list queries in fan-out with this function.
+
+Task 8.9 — Expire remote cache worker
+  Daily scheduled worker. Deletes from remote_comments, remote_posts,
+  remote_actors where stale_after < NOW() and nothing references the actor.
+  MUST NOT touch any rows in the local posts, comments, or users tables.
+
+PART B — Performance fixes (tasks 8.6, 8.7, 8.10)
+
+Task 8.6 — Async federation delivery
+  Audit every handler. Any SendActivityTask::send in a handler body is wrong.
+  Replace with enqueue_activity. Only the background worker calls SendActivityTask::send.
+
+Task 8.7 — Keyset pagination
+  Replace all OFFSET-based pagination with cursor-based (score, published_at) tuples.
+  Cursor is base64-encoded and passed as ?cursor= query parameter.
+  Apply to: community feed, home feed, user post history, admin lists.
+
+Task 8.10 — Connection pool config
+  Update config/development.toml and config/production.toml as specified.
+
+Task 8.11 — Tests
+  Add tests to semantic files. DO NOT create tests/phase8_test.rs.
+  federation_test.rs, post_test.rs, performance_test.rs as detailed in PHASE_8.md.
+
+After all tasks:
+  cargo fmt && cargo clippy -- -D warnings && cargo test
+  Verify all deliverables in PHASE_8.md checklist.
 ```

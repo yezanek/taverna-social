@@ -200,10 +200,11 @@ pub async fn new_community_form(
 
     let response = helpers::render_with_theme(
         &v,
-        "communities/create.html",
+        "communities/new.html",
         json!({
             "current_user": current_user,
-            "eligibility": eligibility,
+            "eligible": eligibility.eligible,
+            "eligibility_reasons": eligibility.reasons,
             "csrf_token": csrf_token,
         }),
         &theme,

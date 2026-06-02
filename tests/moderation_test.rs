@@ -1,23 +1,18 @@
+mod common;
+
 #[cfg(test)]
 mod tests {
-    use loco_rs::testing::prelude::*;
     use serial_test::serial;
-    use taverna::app::App;
     use taverna::models::comments::{CommentError, CommentModel};
     use taverna::models::communities::CommunityModel;
     use taverna::models::community_bans::Entity as CommunityBans;
     use taverna::models::posts::{PostError, PostModel};
     use taverna::models::users::UserModel;
 
-    fn setup() {
-        dotenvy::dotenv().ok();
-    }
-
     #[tokio::test]
     #[serial]
     async fn test_moderator_can_remove_post() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let mod_user = UserModel::create_local(
@@ -62,8 +57,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_banned_user_cannot_post() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let admin = UserModel::create_local(
@@ -123,8 +117,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_locked_post_rejects_comments() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let user = UserModel::create_local(
@@ -181,8 +174,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_admin_can_ban_user() {
-        setup();
-        let boot = boot_test::<App>().await.unwrap();
+        let boot = crate::common::shared_boot().await;
         let db = &boot.app_context.db;
 
         let target = UserModel::create_local(

@@ -105,16 +105,15 @@ where
 
 #[allow(clippy::result_large_err)]
 fn extract_token_from_cookie(parts: &Parts, name: &str) -> Result<String, Error> {
-    let cookies = parts
-        .headers
-        .get("cookie")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    for cookie in cookies.split(';') {
-        let cookie = cookie.trim();
-        if let Some(value) = cookie.strip_prefix(&format!("{}=", name)) {
-            return Ok(value.to_string());
+    for header_value in parts.headers.get_all("cookie") {
+        let Ok(cookies) = header_value.to_str() else {
+            continue;
+        };
+        for cookie in cookies.split(';') {
+            let cookie = cookie.trim();
+            if let Some(value) = cookie.strip_prefix(&format!("{}=", name)) {
+                return Ok(value.to_string());
+            }
         }
     }
 

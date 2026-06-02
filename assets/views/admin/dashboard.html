@@ -67,27 +67,39 @@
   <p>No users.</p>
 {% endif %}
 
-<h2>Communities</h2>
+<h2 style="color:var(--text-primary)">Communities</h2>
 {% if communities %}
   <table style="width:100%;border-collapse:collapse">
     <thead>
-      <tr style="text-align:left;border-bottom:2px solid var(--border)">
-        <th style="padding:0.5rem">Slug</th>
-        <th style="padding:0.5rem">Name</th>
-        <th style="padding:0.5rem">Local</th>
-        <th style="padding:0.5rem">Actions</th>
+      <tr style="background:var(--bg-secondary);">
+        <th style="padding:0.5rem; text-align:left; color:var(--text-primary)">Slug</th>
+        <th style="padding:0.5rem; text-align:left; color:var(--text-primary)">Name</th>
+        <th style="padding:0.5rem; text-align:left; color:var(--text-primary)">Members</th>
+        <th style="padding:0.5rem; text-align:left; color:var(--text-primary)">Posts</th>
+        <th style="padding:0.5rem; text-align:left; color:var(--text-primary)">Local</th>
+        <th style="padding:0.5rem; text-align:left; color:var(--text-primary)">Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for community in communities %}
-        <tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:0.5rem">{{ community.slug }}</td>
-          <td style="padding:0.5rem">{{ community.name }}</td>
-          <td style="padding:0.5rem">{{ community.is_local }}</td>
-          <td style="padding:0.5rem">
-            <form method="POST" action="/admin/communities/{{ community.slug }}/delete" style="display:inline" onsubmit="return confirm('Delete this community?')">
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:0.5rem;">
+            <a href="/c/{{ community.slug }}" style="color:var(--link)">{{ community.slug }}</a>
+          </td>
+          <td style="padding:0.5rem; color:var(--text-primary)">{{ community.name }}</td>
+          <td style="padding:0.5rem; color:var(--text-secondary)">{{ community.member_count }}</td>
+          <td style="padding:0.5rem; color:var(--text-secondary)">{{ community.post_count }}</td>
+          <td style="padding:0.5rem; color:var(--text-secondary)">
+            {% if community.is_local %}✓{% else %}remote{% endif %}
+          </td>
+          <td style="padding:0.5rem;">
+            <form method="POST" action="/admin/communities/{{ community.slug }}/delete" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer">Delete</button>
+              <button type="submit"
+                      style="background:transparent; border:1px solid var(--accent); color:var(--accent); border-radius:4px; padding:0.2rem 0.6rem; cursor:pointer; font-size:0.85rem;"
+                      onclick="return confirm('Delete this community?')">
+                Delete
+              </button>
             </form>
           </td>
         </tr>
@@ -95,6 +107,6 @@
     </tbody>
   </table>
 {% else %}
-  <p>No communities.</p>
+  <p style="color:var(--text-secondary)">No communities.</p>
 {% endif %}
 {% endblock %}
