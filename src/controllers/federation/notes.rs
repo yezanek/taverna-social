@@ -1,5 +1,5 @@
-use activitypub_federation::FEDERATION_CONTENT_TYPE;
-use axum::{extract::Path, http::header::CONTENT_TYPE, response::IntoResponse};
+use activitypub_federation::axum::json::FederationJson;
+use axum::{extract::Path, response::IntoResponse};
 use loco_rs::prelude::*;
 use sea_orm::EntityTrait;
 use tracing::instrument;
@@ -9,17 +9,9 @@ use crate::federation::outbound;
 use crate::models::_entities::{communities, posts, users};
 use crate::models::comments::CommentModel;
 
-fn db_error(e: impl std::fmt::Display) -> Error {
-    tracing::error!(error = %e, "database error");
-    Error::InternalServerError
-}
-
+/// A Note that already carries its `@context`, as `application/activity+json`.
 fn federation_json(object: serde_json::Value) -> Response {
-    (
-        [(CONTENT_TYPE, FEDERATION_CONTENT_TYPE)],
-        axum::Json(object),
-    )
-        .into_response()
+    FederationJson(object).into_response()
 }
 
 /// `GET /posts/:id`: a local post as an ActivityPub Note.
@@ -27,20 +19,15 @@ fn federation_json(object: serde_json::Value) -> Response {
 pub async fn post_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -> Result<Response> {
     let post = posts::Entity::find_by_id(id)
         .one(&ctx.db)
-        .await
-        .map_err(db_error)?
+        .await?
         .filter(|p| !p.is_deleted && !p.is_removed)
         .ok_or(Error::NotFound)?;
     let author = users::Entity::find_by_id(post.author_id)
         .one(&ctx.db)
-        .await
-        .map_err(db_error)?
+        .await?
         .ok_or(Error::NotFound)?;
     let community = match post.community_id {
-        Some(cid) => communities::Entity::find_by_id(cid)
-            .one(&ctx.db)
-            .await
-            .map_err(db_error)?,
+        Some(cid) => communities::Entity::find_by_id(cid).one(&ctx.db).await?,
         None => None,
     };
 
@@ -56,19 +43,16 @@ pub async fn post_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -> R
 #[instrument(skip(ctx))]
 pub async fn comment_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -> Result<Response> {
     let comment = CommentModel::find_by_id(&ctx.db, id)
-        .await
-        .map_err(db_error)?
+        .await?
         .filter(|c| !c.is_deleted && !c.is_removed)
         .ok_or(Error::NotFound)?;
     let author = users::Entity::find_by_id(comment.author_id)
         .one(&ctx.db)
-        .await
-        .map_err(db_error)?
+        .await?
         .ok_or(Error::NotFound)?;
     let in_reply_to = match comment.parent_id {
         Some(parent_id) => CommentModel::find_by_id(&ctx.db, parent_id)
-            .await
-            .map_err(db_error)?
+            .await?
             .map(|p| p.ap_id),
         None => None,
     };
@@ -77,8 +61,7 @@ pub async fn comment_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -
         None => {
             posts::Entity::find_by_id(comment.post_id)
                 .one(&ctx.db)
-                .await
-                .map_err(db_error)?
+                .await?
                 .ok_or(Error::NotFound)?
                 .ap_id
         }

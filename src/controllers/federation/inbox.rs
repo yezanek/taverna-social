@@ -26,9 +26,8 @@ fn map_inbox_error(e: anyhow::Error) -> Error {
 }
 
 /// Handles incoming ActivityPub activities addressed to a user.
-#[instrument(skip(_ctx, activity_data, data))]
+#[instrument(skip(activity_data, data))]
 pub async fn user_inbox(
-    State(_ctx): State<AppContext>,
     data: Data<DatabaseConnection>,
     activity_data: ActivityData,
 ) -> Result<Response> {
@@ -39,9 +38,8 @@ pub async fn user_inbox(
 }
 
 /// Handles incoming ActivityPub activities addressed to a community.
-#[instrument(skip(_ctx, activity_data, data))]
+#[instrument(skip(activity_data, data))]
 pub async fn community_inbox(
-    State(_ctx): State<AppContext>,
     data: Data<DatabaseConnection>,
     activity_data: ActivityData,
 ) -> Result<Response> {

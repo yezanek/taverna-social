@@ -69,9 +69,7 @@ pub async fn register(
         return Ok(StatusCode::FORBIDDEN.into_response());
     }
 
-    let settings = crate::models::instance_settings::load(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let settings = crate::models::instance_settings::load(&ctx.db).await?;
     if !settings.open_registrations {
         return render_with_csrf(
             &v,
@@ -201,13 +199,9 @@ pub async fn login(
     }
 
     let user = if form.identifier.contains('@') {
-        UserModel::find_by_email(&ctx.db, &form.identifier)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+        UserModel::find_by_email(&ctx.db, &form.identifier).await?
     } else {
-        UserModel::find_by_username(&ctx.db, &form.identifier)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+        UserModel::find_by_username(&ctx.db, &form.identifier).await?
     };
 
     let user = match user {
@@ -225,15 +219,10 @@ pub async fn login(
         }
     };
 
-    let jwt_secret = ctx
-        .config
-        .get_jwt_config()
-        .map_err(|_| Error::InternalServerError)?;
+    let jwt_secret = ctx.config.get_jwt_config()?;
 
-    let access_token =
-        create_access_token(&user, &jwt_secret.secret).map_err(|_| Error::InternalServerError)?;
-    let refresh_token =
-        create_refresh_token(&user, &jwt_secret.secret).map_err(|_| Error::InternalServerError)?;
+    let access_token = create_access_token(&user, &jwt_secret.secret).map_err(Error::wrap)?;
+    let refresh_token = create_refresh_token(&user, &jwt_secret.secret).map_err(Error::wrap)?;
 
     let secure_cookies = taverna.base_url.starts_with("https");
     let access_cookie = access_cookie(access_token, secure_cookies);

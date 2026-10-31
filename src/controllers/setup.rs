@@ -1,3 +1,4 @@
+use crate::controllers::errors::invalid_csrf;
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
 use axum_extra::extract::cookie::CookieJar;
@@ -35,9 +36,7 @@ pub async fn wizard_form(
     jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
-    let is_first = first_run::is_first_run(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let is_first = first_run::is_first_run(&ctx.db).await?;
     if !is_first {
         return Err(Error::CustomError(
             axum::http::StatusCode::FORBIDDEN,
@@ -67,9 +66,7 @@ pub async fn wizard_submit(
     headers: HeaderMap,
     Form(form): Form<SetupForm>,
 ) -> Result<Response> {
-    let is_first = first_run::is_first_run(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let is_first = first_run::is_first_run(&ctx.db).await?;
     if !is_first {
         return Err(Error::CustomError(
             axum::http::StatusCode::FORBIDDEN,
@@ -78,7 +75,7 @@ pub async fn wizard_submit(
     }
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
     let instance_name = form.instance_name.trim().to_string();
@@ -109,30 +106,25 @@ pub async fn wizard_submit(
         UserError::UsernameTaken => Error::BadRequest("Username already taken".to_string()),
         UserError::EmailTaken => Error::BadRequest("Email already taken".to_string()),
         UserError::Validation(msg) => Error::BadRequest(msg),
-        _ => Error::InternalServerError,
+        e => Error::wrap(e),
     })?;
 
     users::Entity::update_many()
         .col_expr(users::Column::IsAdmin, Expr::value(true))
         .filter(users::Column::Id.eq(user.id))
         .exec(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+        .await?;
 
     let settings = instance_settings::Entity::find()
         .one(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::InternalServerError)?;
 
     let mut settings_active: instance_settings::ActiveModel = settings.into();
     settings_active.instance_name = sea_orm::Set(instance_name);
     settings_active.open_registrations = sea_orm::Set(form.open_registrations.is_some());
     settings_active.updated_at = sea_orm::Set(chrono::Utc::now().into());
-    settings_active
-        .update(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    settings_active.update(&ctx.db).await?;
 
     first_run_state.mark_complete();
 

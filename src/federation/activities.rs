@@ -1,4 +1,5 @@
 use activitypub_federation::config::Data;
+use activitypub_federation::protocol::verification::verify_domains_match;
 use activitypub_federation::traits::Activity;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use serde::Serialize;
@@ -96,10 +97,10 @@ impl Activity for TavernaActivity {
 
     #[instrument(skip(self, _data))]
     async fn verify(&self, _data: &Data<Self::DataType>) -> Result<(), Self::Error> {
-        // Basic verification: check that actor is not empty
-        if self.actor().as_str().is_empty() {
-            anyhow::bail!("Activity has no actor");
-        }
+        // The crate has already checked the HTTP signature against `actor`.
+        // An activity's id must live on its actor's server, or one server
+        // could forge activities that appear to come from another.
+        verify_domains_match(self.id(), self.actor())?;
         Ok(())
     }
 

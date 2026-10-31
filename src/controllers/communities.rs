@@ -1,3 +1,4 @@
+use crate::controllers::errors::{forbidden, invalid_csrf};
 use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
@@ -11,7 +12,7 @@ use tracing::instrument;
 use crate::common::config::TavernaConfig;
 use crate::common::markdown::render_markdown;
 use crate::controllers::csrf::{self, CsrfForm};
-use crate::federation::outbound;
+use crate::federation::{self, outbound, traits::DbCommunity};
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
 use crate::initializers::theme_middleware::CurrentTheme;
@@ -21,6 +22,8 @@ use crate::models::feed::{self, CursorQuery};
 use crate::models::posts::{PostError, PostModel};
 use crate::models::users::UserModel;
 use crate::views::helpers;
+use activitypub_federation::{config::Data, traits::Object};
+use sea_orm::DatabaseConnection;
 
 const PER_PAGE: u64 = 20;
 
@@ -57,9 +60,7 @@ pub async fn list(
     Extension(theme): Extension<CurrentTheme>,
     Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
-    let communities = CommunityModel::list_all(&ctx.db, page.cursor().as_ref(), PER_PAGE)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let communities = CommunityModel::list_all(&ctx.db, page.cursor().as_ref(), PER_PAGE).await?;
 
     let (csrf_token, csrf_cookie) = csrf::issue();
     let response = helpers::render_with_theme(
@@ -78,7 +79,7 @@ pub async fn list(
 
 /// Shows a community's feed (posts) or its ActivityPub actor representation.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(v, ctx, theme, current_user, jar, data))]
 pub async fn feed(
     ViewEngine(v): ViewEngine<TeraView>,
     State(ctx): State<AppContext>,
@@ -86,56 +87,36 @@ pub async fn feed(
     jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
     Extension(render_mode): Extension<RenderMode>,
+    data: Data<DatabaseConnection>,
     Path(slug): Path<String>,
     Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     match render_mode {
         RenderMode::ActivityPub => {
-            let actor = json!({
-                "@context": [
-                    "https://www.w3.org/ns/activitystreams",
-                    "https://w3id.org/security/v1"
-                ],
-                "id": community.ap_id,
-                "type": "Group",
-                "preferredUsername": community.slug,
-                "name": community.name,
-                "summary": community.description,
-                "inbox": format!("{}/inbox", community.ap_id),
-                "outbox": format!("{}/outbox", community.ap_id),
-                "followers": format!("{}/followers", community.ap_id),
-                "publicKey": {
-                    "id": format!("{}#main-key", community.ap_id),
-                    "owner": community.ap_id,
-                    "publicKeyPem": community.public_key,
-                },
-                "published": community.created_at.format("%+").to_string(),
-                "attributedTo": community.ap_id,
-                "postingRestrictedToMods": community.posting_restricted,
-                "sensitive": community.is_nsfw,
-            });
-            return Ok(axum::Json(actor).into_response());
+            let group = DbCommunity::new(community)
+                .map_err(Error::wrap)?
+                .into_json(&data)
+                .await
+                .map_err(federation::internal)?;
+            return Ok(federation::ap_response(group));
         }
         RenderMode::Html => {}
     }
 
     let is_member = if let Some(ref user) = current_user {
         CommunityModel::get_member_role(&ctx.db, community.id, user.id)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+            .await?
             .is_some()
     } else {
         false
     };
 
-    let posts = feed::community_feed(&ctx.db, community.id, page.cursor().as_ref(), PER_PAGE)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let posts =
+        feed::community_feed(&ctx.db, community.id, page.cursor().as_ref(), PER_PAGE).await?;
 
     let description_rendered = community
         .description
@@ -180,9 +161,8 @@ pub async fn new_community_form(
     jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
-    let eligibility = crate::models::eligibility::check_eligibility(&ctx.db, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let eligibility =
+        crate::models::eligibility::check_eligibility(&ctx.db, current_user.id).await?;
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
@@ -211,12 +191,11 @@ pub async fn create_community(
     Form(form): Form<CreateCommunityForm>,
 ) -> Result<Response> {
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
-    let eligibility = crate::models::eligibility::check_eligibility(&ctx.db, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let eligibility =
+        crate::models::eligibility::check_eligibility(&ctx.db, current_user.id).await?;
 
     if !eligibility.eligible {
         return Err(Error::CustomError(
@@ -250,16 +229,13 @@ pub async fn new_post_form(
     Path(slug): Path<String>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id).await?;
 
     if role.is_none() {
-        return Err(Error::Unauthorized("You must join to post".to_string()));
+        return Err(forbidden("You must join to post"));
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
@@ -288,31 +264,24 @@ pub async fn create_post(
     Form(form): Form<CreatePostForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id).await?;
 
     if role.is_none() {
-        return Err(Error::Unauthorized("You must join to post".to_string()));
+        return Err(forbidden("You must join to post"));
     }
 
     // `posting_restricted` communities only accept posts from moderators.
     if community.posting_restricted
-        && !CommunityModel::can_moderate(&ctx.db, community.id, &current_user)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+        && !CommunityModel::can_moderate(&ctx.db, community.id, &current_user).await?
     {
-        return Err(Error::Unauthorized(
-            "Only moderators can post in this community".to_string(),
-        ));
+        return Err(forbidden("Only moderators can post in this community"));
     }
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
     let post = PostModel::create(
@@ -326,9 +295,9 @@ pub async fn create_post(
     )
     .await
     .map_err(|e| match e {
-        PostError::Banned => Error::Unauthorized("You are banned from this community".to_string()),
+        PostError::Banned => forbidden("You are banned from this community"),
         PostError::Validation(msg) => Error::BadRequest(msg),
-        _ => Error::InternalServerError,
+        e => Error::wrap(e),
     })?;
 
     if taverna.federation.enabled {
@@ -359,17 +328,14 @@ pub async fn join(
     Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
-    CommunityModel::add_member(&ctx.db, community.id, current_user.id, "member")
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    CommunityModel::add_member(&ctx.db, community.id, current_user.id, "member").await?;
 
     if taverna.federation.enabled && !community.is_local {
         let follow = outbound::follow(&current_user.ap_id, &community.ap_id, community.id);
@@ -397,15 +363,12 @@ pub async fn leave(
     Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
-    CommunityModel::remove_member(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    CommunityModel::remove_member(&ctx.db, community.id, current_user.id).await?;
 
     if taverna.federation.enabled && !community.is_local {
         let undo = outbound::undo_follow(&current_user.ap_id, &community.ap_id, community.id);
@@ -431,16 +394,13 @@ pub async fn settings_form(
     Path(slug): Path<String>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id).await?;
 
     if role.as_deref() != Some("moderator") && !current_user.is_admin {
-        return Err(Error::Unauthorized("Moderator access required".to_string()));
+        return Err(forbidden("Moderator access required"));
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
@@ -469,20 +429,17 @@ pub async fn update_settings(
     Form(form): Form<CommunitySettingsForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id).await?;
 
     if role.as_deref() != Some("moderator") && !current_user.is_admin {
-        return Err(Error::Unauthorized("Moderator access required".to_string()));
+        return Err(forbidden("Moderator access required"));
     }
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
     CommunityModel::update_settings(
@@ -495,7 +452,7 @@ pub async fn update_settings(
         Some(form.posting_restricted.is_some()),
     )
     .await
-    .map_err(|_| Error::InternalServerError)?;
+    .map_err(Error::wrap)?;
 
     Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
 }
@@ -512,30 +469,25 @@ pub async fn ban_user(
     Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id).await?;
 
     if role.as_deref() != Some("moderator") && !current_user.is_admin {
-        return Err(Error::Unauthorized("Moderator access required".to_string()));
+        return Err(forbidden("Moderator access required"));
     }
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
     let target = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     CommunityBansEntity::create_ban(&ctx.db, community.id, target.id, current_user.id, None)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+        .await?;
 
     Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
 }
@@ -552,30 +504,24 @@ pub async fn unban_user(
     Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let role = CommunityModel::get_member_role(&ctx.db, community.id, current_user.id).await?;
 
     if role.as_deref() != Some("moderator") && !current_user.is_admin {
-        return Err(Error::Unauthorized("Moderator access required".to_string()));
+        return Err(forbidden("Moderator access required"));
     }
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
     let target = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    CommunityBansEntity::remove_ban(&ctx.db, community.id, target.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    CommunityBansEntity::remove_ban(&ctx.db, community.id, target.id).await?;
 
     Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
 }

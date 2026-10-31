@@ -292,3 +292,29 @@ The Announce of a remote post wraps the original `Create` (SPEC §6.4).
 drifted: posts were attributed to the community (which our own inbox
 rejects), `Undo{Follow}` referenced an id that was never sent, and the
 Announce carried a bare Note.
+
+---
+
+## ADR-024: Framework idioms after the Loco 1.2 upgrade
+
+**Decision:**
+- `App::after_context` reads `TavernaConfig` and builds the single
+  `FederationConfig`, and keeps both in Loco's `shared_store`. The router
+  layers and `DeliverActivityWorker` take them from there, so the inbox
+  middleware and outbound delivery share one HTTP client.
+- Controllers use `?` on `DbErr` (Loco maps `Error::DB` to a 500 and logs
+  the cause). Other internal errors go through `Error::wrap`, never a bare
+  `Error::InternalServerError` that drops the cause.
+- 401 means "not signed in". A signed-in user who may not do something, or
+  a request with a bad CSRF token, gets a 403 (`controllers::errors`).
+- Actor documents come from the crate's `Object::into_json` on `DbUser` /
+  `DbCommunity`, wrapped in `FederationJson(WithContext::new(..))`, so the
+  actor endpoint, `Update{Person}` and the crate's own fetches agree. All
+  ActivityPub responses use `application/activity+json`.
+- `TavernaActivity::verify` checks that an activity's id is on its actor's
+  domain (`verify_domains_match`).
+
+**Reason:** The hand-written JSON for actors and outboxes had drifted from
+the trait implementations (outboxes sent raw markdown and attributed
+community posts to the community), and blanket `InternalServerError`
+mapping hid every database error from the logs.

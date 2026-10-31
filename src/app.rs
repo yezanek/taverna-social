@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use axum::Router as AxumRouter;
+use loco_rs::bgworker::BackgroundWorker;
 use loco_rs::{
     Result,
     app::{AppContext, Hooks, Initializer},
@@ -45,6 +46,21 @@ impl Hooks for App {
         config: Config,
     ) -> Result<BootResult> {
         create_app::<Self, Migrator>(mode, environment, config).await
+    }
+
+    /// Reads Taverna's settings and builds the federation config once, and
+    /// keeps both in Loco's shared store for the router and the workers.
+    async fn after_context(ctx: AppContext) -> Result<AppContext> {
+        let taverna_config = TavernaConfig::from_env()
+            .map_err(|e| loco_rs::Error::string(&format!("Config error: {e}")))?;
+        let federation_config =
+            crate::federation::build_config(ctx.db.clone(), &taverna_config.domain)
+                .await
+                .map_err(loco_rs::Error::wrap)?;
+        tracing::info!(domain = %taverna_config.domain, "federation configured");
+        ctx.shared_store.insert(taverna_config);
+        ctx.shared_store.insert(federation_config);
+        Ok(ctx)
     }
 
     async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
@@ -212,25 +228,20 @@ impl Hooks for App {
     }
 
     async fn after_routes(router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
-        let taverna_config = TavernaConfig::from_env()
-            .map_err(|e| loco_rs::Error::string(&format!("Config error: {}", e)))?;
+        let taverna_config = ctx
+            .shared_store
+            .get::<TavernaConfig>()
+            .ok_or_else(|| loco_rs::Error::string("TavernaConfig missing from shared store"))?;
+        let federation_config = ctx
+            .shared_store
+            .get::<crate::federation::TavernaFederation>()
+            .ok_or_else(|| loco_rs::Error::string("FederationConfig missing from shared store"))?;
 
         let router = router.layer(initializers::first_run::FirstRunLayer::new(ctx.db.clone()));
 
         let mut router = router.layer(axum::middleware::from_fn(
             initializers::content_negotiation::content_negotiation_middleware,
         ));
-
-        let domain = taverna_config.domain.clone();
-        let federation_config = activitypub_federation::config::FederationConfig::builder()
-            .domain(&domain)
-            .app_data(ctx.db.clone())
-            .debug(cfg!(debug_assertions))
-            .build()
-            .await
-            .map_err(|e| loco_rs::Error::string(&format!("Federation config error: {}", e)))?;
-
-        tracing::info!("Federation configured for domain: {}", domain);
 
         router = router.layer(activitypub_federation::config::FederationMiddleware::new(
             federation_config,
@@ -259,7 +270,7 @@ impl Hooks for App {
 
     async fn connect_workers(ctx: &AppContext, queue: &loco_rs::bgworker::Queue) -> Result<()> {
         queue
-            .register(crate::workers::deliver_activity::DeliverActivityWorker::new(ctx.db.clone()))
+            .register(crate::workers::deliver_activity::DeliverActivityWorker::build(ctx))
             .await?;
         queue
             .register(

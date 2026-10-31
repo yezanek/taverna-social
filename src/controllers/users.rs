@@ -1,3 +1,4 @@
+use crate::controllers::errors::{forbidden, invalid_csrf};
 use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
@@ -10,7 +11,7 @@ use tracing::instrument;
 use crate::common::config::TavernaConfig;
 use crate::common::markdown::render_markdown;
 use crate::controllers::csrf;
-use crate::federation::outbound;
+use crate::federation::{self, outbound, traits::DbUser};
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
 use crate::initializers::theme_middleware::CurrentTheme;
@@ -20,6 +21,8 @@ use crate::models::follows::Entity as FollowEntity;
 use crate::models::posts::PostModel;
 use crate::models::users::{UserError, UserModel};
 use crate::views::helpers;
+use activitypub_federation::{config::Data, traits::Object};
+use sea_orm::DatabaseConnection;
 
 const PER_PAGE: u64 = 20;
 
@@ -65,7 +68,7 @@ pub struct PasswordForm {
 
 /// Shows a user's public profile with their posts and follower counts.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, current_user, jar, taverna, theme, render_mode))]
+#[instrument(skip(v, ctx, current_user, jar, taverna, theme, render_mode, data))]
 pub async fn profile(
     ViewEngine(v): ViewEngine<TeraView>,
     State(ctx): State<AppContext>,
@@ -74,55 +77,31 @@ pub async fn profile(
     Extension(taverna): Extension<TavernaConfig>,
     Extension(theme): Extension<CurrentTheme>,
     Extension(render_mode): Extension<RenderMode>,
+    data: Data<DatabaseConnection>,
     Path(username): Path<String>,
 ) -> Result<Response> {
     let user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     match render_mode {
         RenderMode::ActivityPub => {
-            let actor = serde_json::json!({
-                "@context": [
-                    "https://www.w3.org/ns/activitystreams",
-                    "https://w3id.org/security/v1"
-                ],
-                "id": user.ap_id,
-                "type": "Person",
-                "url": user.ap_id,
-                "preferredUsername": user.username,
-                "name": user.display_name,
-                "summary": user.bio,
-                "icon": user.avatar_url,
-                "inbox": format!("{}/inbox", user.ap_id),
-                "outbox": format!("{}/outbox", user.ap_id),
-                "followers": format!("{}/followers", user.ap_id),
-                "following": format!("{}/following", user.ap_id),
-                "publicKey": {
-                    "id": format!("{}#main-key", user.ap_id),
-                    "owner": user.ap_id,
-                    "publicKeyPem": user.public_key,
-                },
-                "manuallyApprovesFollowers": false,
-                "published": user.created_at.format("%+").to_string(),
-            });
-            return Ok(axum::Json(actor).into_response());
+            let person = DbUser::new(user)
+                .map_err(Error::wrap)?
+                .into_json(&data)
+                .await
+                .map_err(federation::internal)?;
+            return Ok(federation::ap_response(person));
         }
         RenderMode::Html => {}
     }
 
-    let follower_count = FollowEntity::count_followers(&ctx.db, user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
-    let following_count = FollowEntity::count_following(&ctx.db, user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let follower_count = FollowEntity::count_followers(&ctx.db, user.id).await?;
+    let following_count = FollowEntity::count_following(&ctx.db, user.id).await?;
 
     let is_following = if let Some(ref cu) = current_user {
         FollowEntity::find_follow(&ctx.db, cu.id, user.id)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+            .await?
             .is_some()
     } else {
         false
@@ -130,9 +109,7 @@ pub async fn profile(
 
     let bio_rendered = user.bio.as_deref().map(render_markdown).unwrap_or_default();
 
-    let posts = PostModel::list_for_author(&ctx.db, user.id, None, PER_PAGE)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let posts = PostModel::list_for_author(&ctx.db, user.id, None, PER_PAGE).await?;
 
     let display_name = user
         .display_name
@@ -180,21 +157,15 @@ pub async fn profile_posts(
     Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
     let user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let follower_count = FollowEntity::count_followers(&ctx.db, user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
-    let following_count = FollowEntity::count_following(&ctx.db, user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let follower_count = FollowEntity::count_followers(&ctx.db, user.id).await?;
+    let following_count = FollowEntity::count_following(&ctx.db, user.id).await?;
 
     let is_following = if let Some(ref cu) = current_user {
         FollowEntity::find_follow(&ctx.db, cu.id, user.id)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+            .await?
             .is_some()
     } else {
         false
@@ -202,9 +173,8 @@ pub async fn profile_posts(
 
     let bio_rendered = user.bio.as_deref().map(render_markdown).unwrap_or_default();
 
-    let posts = PostModel::list_for_author(&ctx.db, user.id, page.cursor().as_ref(), PER_PAGE)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let posts =
+        PostModel::list_for_author(&ctx.db, user.id, page.cursor().as_ref(), PER_PAGE).await?;
 
     let display_name = user
         .display_name
@@ -253,21 +223,15 @@ pub async fn profile_comments(
     Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
     let user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let follower_count = FollowEntity::count_followers(&ctx.db, user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
-    let following_count = FollowEntity::count_following(&ctx.db, user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let follower_count = FollowEntity::count_followers(&ctx.db, user.id).await?;
+    let following_count = FollowEntity::count_following(&ctx.db, user.id).await?;
 
     let is_following = if let Some(ref cu) = current_user {
         FollowEntity::find_follow(&ctx.db, cu.id, user.id)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+            .await?
             .is_some()
     } else {
         false
@@ -276,9 +240,7 @@ pub async fn profile_comments(
     let bio_rendered = user.bio.as_deref().map(render_markdown).unwrap_or_default();
 
     let comments_with_posts =
-        CommentModel::list_for_author(&ctx.db, user.id, page.cursor().as_ref(), PER_PAGE)
-            .await
-            .map_err(|_| Error::InternalServerError)?;
+        CommentModel::list_for_author(&ctx.db, user.id, page.cursor().as_ref(), PER_PAGE).await?;
 
     let display_name = user
         .display_name
@@ -326,21 +288,18 @@ pub async fn follow(
     Form(form): Form<FollowForm>,
 ) -> Result<Response> {
     let target = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if target.id == current_user.id {
-        return Err(Error::Unauthorized("Cannot follow yourself".to_string()));
+        return Err(Error::BadRequest("Cannot follow yourself".to_string()));
     }
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
-    FollowEntity::create_local_follow(&ctx.db, current_user.id, target.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    FollowEntity::create_local_follow(&ctx.db, current_user.id, target.id).await?;
 
     // `users` holds local accounts only (ADR-017), so a user-to-user follow
     // never needs federating; remote follows arrive through the inbox.
@@ -386,17 +345,14 @@ pub async fn unfollow(
     Form(form): Form<FollowForm>,
 ) -> Result<Response> {
     let target = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
-    FollowEntity::delete_follow(&ctx.db, current_user.id, target.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    FollowEntity::delete_follow(&ctx.db, current_user.id, target.id).await?;
 
     // `users` holds local accounts only (ADR-017), so a user-to-user follow
     // never needs federating; remote follows arrive through the inbox.
@@ -438,16 +394,14 @@ pub async fn settings_form(
     Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
     let user = UserModel::find_by_id(&ctx.db, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
     let user_email = user.email.clone();
-    let eligibility = crate::models::eligibility::check_eligibility(&ctx.db, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let eligibility =
+        crate::models::eligibility::check_eligibility(&ctx.db, current_user.id).await?;
     let response = helpers::render_with_theme(
         &v,
         "users/settings.html",
@@ -464,17 +418,18 @@ pub async fn settings_form(
 }
 
 /// Updates user profile settings (display name, bio, avatar, email).
-#[instrument(skip(ctx, form, jar, headers, taverna))]
+#[instrument(skip(ctx, form, jar, headers, taverna, data))]
 pub async fn update_settings(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
     Extension(taverna): Extension<TavernaConfig>,
     headers: HeaderMap,
+    data: Data<DatabaseConnection>,
     Form(form): Form<SettingsForm>,
 ) -> Result<Response> {
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
     UserModel::update_profile(
@@ -487,7 +442,7 @@ pub async fn update_settings(
     .await
     .map_err(|e| match e {
         UserError::Validation(msg) => Error::BadRequest(msg),
-        _ => Error::InternalServerError,
+        e => Error::wrap(e),
     })?;
 
     if let Some(email) = form
@@ -501,7 +456,7 @@ pub async fn update_settings(
             .map_err(|e| match e {
                 UserError::EmailTaken => Error::BadRequest("Email already taken".to_string()),
                 UserError::Validation(msg) => Error::BadRequest(msg),
-                _ => Error::InternalServerError,
+                e => Error::wrap(e),
             })?;
         if changed {
             send_new_verification(&ctx, &current_user, email, &taverna.base_url).await;
@@ -510,21 +465,19 @@ pub async fn update_settings(
 
     // Re-fetch persisted user for federation payload
     let persisted_user = UserModel::find_by_id(&ctx.db, current_user.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if taverna.federation.enabled {
-        let person = serde_json::json!({
-            "id": persisted_user.ap_id,
-            "type": "Person",
-            "preferredUsername": persisted_user.username,
-            "name": persisted_user.display_name,
-            "summary": persisted_user.bio,
-            "icon": persisted_user.avatar_url,
-            "to": [outbound::AP_PUBLIC],
-            "cc": [persisted_user.followers_url],
-        });
+        let followers_url = persisted_user.followers_url.clone();
+        let person = DbUser::new(persisted_user)
+            .map_err(Error::wrap)?
+            .into_json(&data)
+            .await
+            .map_err(federation::internal)?;
+        let mut person = serde_json::to_value(person)?;
+        person["to"] = json!([outbound::AP_PUBLIC]);
+        person["cc"] = json!([followers_url]);
         let update = outbound::wrap("Update", &current_user.ap_id, person);
         outbound::send_to_user_followers(&ctx.db, &update, current_user.id, &current_user.ap_id)
             .await;
@@ -544,7 +497,7 @@ pub async fn change_password(
     Form(form): Form<PasswordForm>,
 ) -> Result<Response> {
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
     if form.new_password != form.new_password_confirm {
@@ -560,7 +513,7 @@ pub async fn change_password(
     .await
     .map_err(|e| match e {
         UserError::Validation(msg) => Error::BadRequest(msg),
-        _ => Error::InternalServerError,
+        e => Error::wrap(e),
     })?;
 
     Ok(format::redirect("/settings").into_response())
@@ -577,12 +530,11 @@ pub async fn profile_new_post(
     Path(username): Path<String>,
 ) -> Result<Response> {
     let _user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if current_user.username != username {
-        return Err(Error::Unauthorized("Not authorized".to_string()));
+        return Err(forbidden("Not authorized"));
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
@@ -612,11 +564,11 @@ pub async fn create_profile_post(
     Form(form): Form<CreateProfilePostForm>,
 ) -> Result<Response> {
     if current_user.username != username {
-        return Err(Error::Unauthorized("Not authorized".to_string()));
+        return Err(forbidden("Not authorized"));
     }
 
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
 
     let post = PostModel::create(
@@ -629,7 +581,7 @@ pub async fn create_profile_post(
         &taverna.base_url,
     )
     .await
-    .map_err(|_| Error::InternalServerError)?;
+    .map_err(Error::wrap)?;
 
     if taverna.federation.enabled {
         let note = outbound::post_note(

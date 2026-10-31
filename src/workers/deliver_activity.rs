@@ -1,5 +1,4 @@
 use activitypub_federation::activity_sending::SendActivityTask;
-use activitypub_federation::config::FederationConfig;
 use anyhow::Result;
 use async_trait::async_trait;
 use loco_rs::{Result as LocoResult, app::AppContext, bgworker::BackgroundWorker};
@@ -14,6 +13,7 @@ use tracing::instrument;
 use url::Url;
 
 use crate::common::config::TavernaConfig;
+use crate::federation::TavernaFederation;
 use crate::federation::activities::SendActivity;
 use crate::federation::traits::{DbCommunity, DbUser};
 use crate::models::_entities::{communities, outbound_activities, users};
@@ -25,30 +25,26 @@ pub struct DeliverActivityArgs {
 
 pub struct DeliverActivityWorker {
     db: DatabaseConnection,
-    /// Built on first use and reused, so every delivery shares one HTTP
-    /// client and its keep-alive connections (Phase 8, B6).
-    federation: Arc<OnceCell<FederationConfig<DatabaseConnection>>>,
+    /// The app's federation config from Loco's shared store, so deliveries
+    /// share one HTTP client and its keep-alive connections (Phase 8, B6).
+    /// Built from the environment on first use if the store has none.
+    federation: Arc<OnceCell<TavernaFederation>>,
 }
 
 impl DeliverActivityWorker {
     #[must_use]
-    pub fn new(db: DatabaseConnection) -> Self {
+    pub fn new(db: DatabaseConnection, federation: Option<TavernaFederation>) -> Self {
         Self {
             db,
-            federation: Arc::new(OnceCell::new()),
+            federation: Arc::new(OnceCell::new_with(federation)),
         }
     }
 
-    async fn federation_config(&self) -> Result<&FederationConfig<DatabaseConnection>> {
+    async fn federation_config(&self) -> Result<&TavernaFederation> {
         self.federation
             .get_or_try_init(|| async {
                 let taverna = TavernaConfig::from_env()?;
-                Ok(FederationConfig::builder()
-                    .domain(&taverna.domain)
-                    .app_data(self.db.clone())
-                    .debug(cfg!(debug_assertions))
-                    .build()
-                    .await?)
+                Ok(crate::federation::build_config(self.db.clone(), &taverna.domain).await?)
             })
             .await
     }
@@ -57,7 +53,7 @@ impl DeliverActivityWorker {
 #[async_trait]
 impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
     fn build(ctx: &AppContext) -> Self {
-        Self::new(ctx.db.clone())
+        Self::new(ctx.db.clone(), ctx.shared_store.get::<TavernaFederation>())
     }
 
     #[instrument(skip(self))]

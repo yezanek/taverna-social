@@ -1,3 +1,4 @@
+use crate::controllers::errors::invalid_csrf;
 use axum::extract::Query;
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
@@ -56,7 +57,7 @@ pub async fn resend_verification(
     Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+        return Err(invalid_csrf());
     }
     if current_user.email_verified {
         return Err(Error::BadRequest("Email already verified".to_string()));

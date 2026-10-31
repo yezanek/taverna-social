@@ -1,8 +1,8 @@
+use crate::controllers::errors::{forbidden, invalid_csrf};
 use axum::extract::Path;
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
 use axum_extra::extract::cookie::CookieJar;
-use loco_rs::controller::ErrorDetail;
 use loco_rs::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -66,22 +66,6 @@ pub struct EditCommentForm {
 
 // ── Shared lookups ──────────────────────────────────────────
 
-fn db_error(e: impl std::fmt::Display) -> Error {
-    tracing::error!(error = %e, "database error");
-    Error::InternalServerError
-}
-
-fn forbidden(reason: &str) -> Error {
-    Error::CustomError(
-        axum::http::StatusCode::FORBIDDEN,
-        ErrorDetail::with_reason(reason),
-    )
-}
-
-fn invalid_csrf() -> Error {
-    Error::Unauthorized("Invalid CSRF token".to_string())
-}
-
 /// Loads the community and a post that belongs to it, or 404.
 async fn load_post(
     db: &sea_orm::DatabaseConnection,
@@ -89,12 +73,10 @@ async fn load_post(
     post_id: Uuid,
 ) -> Result<(communities::Model, posts::Model)> {
     let community = CommunityModel::find_by_slug(db, slug)
-        .await
-        .map_err(db_error)?
+        .await?
         .ok_or(Error::NotFound)?;
     let post = PostModel::find_by_id(db, post_id)
-        .await
-        .map_err(db_error)?
+        .await?
         .filter(|p| p.community_id == Some(community.id))
         .ok_or(Error::NotFound)?;
     Ok((community, post))
@@ -109,8 +91,7 @@ async fn load_comment(
 ) -> Result<(communities::Model, posts::Model, comments::Model)> {
     let (community, post) = load_post(db, slug, post_id).await?;
     let comment = CommentModel::find_by_id(db, comment_id)
-        .await
-        .map_err(db_error)?
+        .await?
         .filter(|c| c.post_id == post_id)
         .ok_or(Error::NotFound)?;
     Ok((community, post, comment))
@@ -122,13 +103,10 @@ async fn require_moderator(
     community: &communities::Model,
     user: &users::Model,
 ) -> Result<()> {
-    if CommunityModel::can_moderate(db, community.id, user)
-        .await
-        .map_err(db_error)?
-    {
+    if CommunityModel::can_moderate(db, community.id, user).await? {
         Ok(())
     } else {
-        Err(Error::Unauthorized("Moderator access required".to_string()))
+        Err(forbidden("Moderator access required"))
     }
 }
 
@@ -150,7 +128,7 @@ fn vote_error(e: VoteError) -> Error {
         VoteError::OwnContent => forbidden("You cannot vote on your own content"),
         VoteError::InvalidValue => Error::BadRequest("Vote must be 1 or -1".to_string()),
         VoteError::NotFound => Error::NotFound,
-        VoteError::Db(e) => db_error(e),
+        VoteError::Db(e) => e.into(),
     }
 }
 
@@ -164,8 +142,7 @@ async fn federate_vote(
     value: i16,
 ) -> Result<()> {
     let author = UserModel::find_by_id(db, author_id)
-        .await
-        .map_err(db_error)?
+        .await?
         .ok_or(Error::InternalServerError)?;
     if !author.is_local {
         let activity = outbound::vote(&voter.ap_id, object_ap_id, value);
@@ -189,9 +166,7 @@ pub async fn detail(
     let (community, post) = load_post(&ctx.db, &slug, post_id).await?;
 
     let can_moderate = match &current_user {
-        Some(user) => CommunityModel::can_moderate(&ctx.db, community.id, user)
-            .await
-            .map_err(db_error)?,
+        Some(user) => CommunityModel::can_moderate(&ctx.db, community.id, user).await?,
         None => false,
     };
     if post.is_deleted || (post.is_removed && !can_moderate) {
@@ -199,8 +174,7 @@ pub async fn detail(
     }
 
     let author = UserModel::find_by_id(&ctx.db, post.author_id)
-        .await
-        .map_err(db_error)?
+        .await?
         .ok_or(Error::NotFound)?;
 
     let body_rendered = post
@@ -209,15 +183,12 @@ pub async fn detail(
         .map(render_markdown)
         .unwrap_or_default();
 
-    let comments = CommentModel::list_for_post(&ctx.db, post_id)
-        .await
-        .map_err(db_error)?;
+    let comments = CommentModel::list_for_post(&ctx.db, post_id).await?;
 
     // One query for every comment author instead of one per comment.
     let author_ids: Vec<Uuid> = comments.iter().map(|c| c.author_id).collect();
     let usernames: HashMap<Uuid, String> = UserModel::find_by_ids(&ctx.db, &author_ids)
-        .await
-        .map_err(db_error)?
+        .await?
         .into_iter()
         .map(|u| (u.id, u.username))
         .collect();
@@ -255,8 +226,7 @@ pub async fn detail(
 
     let remote_comments: Vec<serde_json::Value> =
         RemoteCommentModel::list_for_local_post(&ctx.db, post_id)
-            .await
-            .map_err(db_error)?
+            .await?
             .into_iter()
             .map(|(c, author)| {
                 let author_name = author
@@ -274,9 +244,7 @@ pub async fn detail(
             .collect();
 
     let user_vote = match &current_user {
-        Some(user) => VoteModel::get_user_vote_on_post(&ctx.db, user.id, post_id)
-            .await
-            .map_err(db_error)?,
+        Some(user) => VoteModel::get_user_vote_on_post(&ctx.db, user.id, post_id).await?,
         None => None,
     };
 
@@ -329,8 +297,7 @@ pub async fn vote(
         .map_err(vote_error)?;
 
     let post = PostModel::find_by_id(&ctx.db, post_id)
-        .await
-        .map_err(db_error)?
+        .await?
         .ok_or(Error::NotFound)?;
 
     if taverna.federation.enabled {
@@ -344,9 +311,7 @@ pub async fn vote(
         .await?;
     }
 
-    let user_vote = VoteModel::get_user_vote_on_post(&ctx.db, current_user.id, post_id)
-        .await
-        .map_err(db_error)?;
+    let user_vote = VoteModel::get_user_vote_on_post(&ctx.db, current_user.id, post_id).await?;
 
     helpers::render(
         &v,
@@ -376,7 +341,7 @@ pub async fn edit_form(
 ) -> Result<Response> {
     let (community, post) = load_post(&ctx.db, &slug, post_id).await?;
     if post.author_id != current_user.id {
-        return Err(Error::Unauthorized("Not authorized".to_string()));
+        return Err(forbidden("Not authorized"));
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
@@ -407,7 +372,7 @@ pub async fn update_post(
 ) -> Result<Response> {
     let (community, post) = load_post(&ctx.db, &slug, post_id).await?;
     if post.author_id != current_user.id {
-        return Err(Error::Unauthorized("Not authorized".to_string()));
+        return Err(forbidden("Not authorized"));
     }
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(invalid_csrf());
@@ -424,7 +389,7 @@ pub async fn update_post(
     .map_err(|e| match e {
         PostError::Validation(msg) => Error::BadRequest(msg),
         PostError::NotFound => Error::NotFound,
-        other => db_error(other),
+        other => Error::wrap(other),
     })?;
 
     if taverna.federation.enabled {
@@ -461,9 +426,7 @@ pub async fn delete(
         return Err(invalid_csrf());
     }
 
-    PostModel::soft_delete(&ctx.db, post_id)
-        .await
-        .map_err(db_error)?;
+    PostModel::soft_delete(&ctx.db, post_id).await?;
 
     if taverna.federation.enabled {
         let delete = outbound::delete(&current_user.ap_id, &post.ap_id);
@@ -489,10 +452,7 @@ pub async fn create_comment(
     if post.is_locked {
         return Err(forbidden("Post is locked"));
     }
-    if CommunityBansEntity::is_banned(&ctx.db, community.id, current_user.id)
-        .await
-        .map_err(db_error)?
-    {
+    if CommunityBansEntity::is_banned(&ctx.db, community.id, current_user.id).await? {
         return Err(forbidden("You are banned from this community"));
     }
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
@@ -513,14 +473,13 @@ pub async fn create_comment(
         CommentError::Validation(msg) => Error::BadRequest(msg),
         CommentError::PostLocked => forbidden("Post is locked"),
         CommentError::NotFound => Error::NotFound,
-        other => db_error(other),
+        other => Error::wrap(other),
     })?;
 
     if taverna.federation.enabled {
         let in_reply_to = match form.parent_id {
             Some(parent_id) => CommentModel::find_by_id(&ctx.db, parent_id)
-                .await
-                .map_err(db_error)?
+                .await?
                 .map_or_else(|| post.ap_id.clone(), |p| p.ap_id),
             None => post.ap_id.clone(),
         };
@@ -556,8 +515,7 @@ pub async fn vote_comment(
         .map_err(vote_error)?;
 
     let comment = CommentModel::find_by_id(&ctx.db, comment_id)
-        .await
-        .map_err(db_error)?
+        .await?
         .ok_or(Error::NotFound)?;
 
     if taverna.federation.enabled {
@@ -571,9 +529,8 @@ pub async fn vote_comment(
         .await?;
     }
 
-    let user_vote = VoteModel::get_user_vote_on_comment(&ctx.db, current_user.id, comment_id)
-        .await
-        .map_err(db_error)?;
+    let user_vote =
+        VoteModel::get_user_vote_on_comment(&ctx.db, current_user.id, comment_id).await?;
 
     helpers::render(
         &v,
@@ -608,9 +565,7 @@ pub async fn remove(
         return Err(invalid_csrf());
     }
 
-    PostModel::soft_remove(&ctx.db, post_id)
-        .await
-        .map_err(db_error)?;
+    PostModel::soft_remove(&ctx.db, post_id).await?;
     Ok(format::redirect(&format!("/c/{slug}")).into_response())
 }
 
@@ -631,9 +586,7 @@ pub async fn pin(
         return Err(invalid_csrf());
     }
 
-    PostModel::toggle_pin(&ctx.db, post_id)
-        .await
-        .map_err(db_error)?;
+    PostModel::toggle_pin(&ctx.db, post_id).await?;
     Ok(format::redirect(&post_url(&slug, post_id)).into_response())
 }
 
@@ -654,9 +607,7 @@ pub async fn lock(
         return Err(invalid_csrf());
     }
 
-    PostModel::toggle_lock(&ctx.db, post_id)
-        .await
-        .map_err(db_error)?;
+    PostModel::toggle_lock(&ctx.db, post_id).await?;
     Ok(format::redirect(&post_url(&slug, post_id)).into_response())
 }
 
@@ -672,7 +623,7 @@ pub async fn edit_comment_form(
 ) -> Result<Response> {
     let (community, post, comment) = load_comment(&ctx.db, &slug, post_id, comment_id).await?;
     if comment.author_id != current_user.id {
-        return Err(Error::Unauthorized("Not authorized".to_string()));
+        return Err(forbidden("Not authorized"));
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
@@ -704,7 +655,7 @@ pub async fn update_comment(
 ) -> Result<Response> {
     let (community, post, comment) = load_comment(&ctx.db, &slug, post_id, comment_id).await?;
     if comment.author_id != current_user.id {
-        return Err(Error::Unauthorized("Not authorized".to_string()));
+        return Err(forbidden("Not authorized"));
     }
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(invalid_csrf());
@@ -715,7 +666,7 @@ pub async fn update_comment(
         .map_err(|e| match e {
             CommentError::Validation(msg) => Error::BadRequest(msg),
             CommentError::NotFound => Error::NotFound,
-            other => db_error(other),
+            other => Error::wrap(other),
         })?;
 
     if taverna.federation.enabled {
@@ -741,15 +692,13 @@ pub async fn delete_comment(
 ) -> Result<Response> {
     let (community, _, comment) = load_comment(&ctx.db, &slug, post_id, comment_id).await?;
     if comment.author_id != current_user.id {
-        return Err(Error::Unauthorized("Not authorized".to_string()));
+        return Err(forbidden("Not authorized"));
     }
     if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(invalid_csrf());
     }
 
-    CommentModel::soft_delete(&ctx.db, comment_id)
-        .await
-        .map_err(db_error)?;
+    CommentModel::soft_delete(&ctx.db, comment_id).await?;
 
     if taverna.federation.enabled {
         let delete = outbound::delete(&current_user.ap_id, &comment.ap_id);
@@ -778,9 +727,7 @@ pub async fn remove_comment(
         return Err(invalid_csrf());
     }
 
-    CommentModel::soft_remove(&ctx.db, comment_id)
-        .await
-        .map_err(db_error)?;
+    CommentModel::soft_remove(&ctx.db, comment_id).await?;
 
     Ok(format::redirect(&post_url(&slug, post_id)).into_response())
 }

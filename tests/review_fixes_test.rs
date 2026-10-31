@@ -105,7 +105,7 @@ mod tests {
         let resp = with_cookies(server.post("/c/pub/join"), &cookies)
             .form(&serde_json::json!({}))
             .await;
-        assert_eq!(resp.status_code(), 401);
+        assert_eq!(resp.status_code(), 403);
     }
 
     #[tokio::test]
