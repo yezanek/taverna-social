@@ -57,3 +57,17 @@ path = "src/bin/main.rs"
 loco-rs = { workspace = true, features = ["testing"] }
 serial_test = "3"
 axum-test = "17.3"
+
+# Password hashing (argon2) and RSA key generation are extremely slow without
+# optimisation. Compile the crypto crates optimised even in dev/test builds so
+# the test suite isn't dominated by hashing and keypair generation.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.rsa]
+opt-level = 3
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
