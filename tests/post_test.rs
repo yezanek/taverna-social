@@ -501,4 +501,151 @@ mod tests {
             "post detail page should contain the post title"
         );
     }
+
+    // ── Phase 8: unified feed and keyset pagination ──────────
+
+    async fn remote_post_in(
+        db: &sea_orm::DatabaseConnection,
+        community_id: uuid::Uuid,
+        title: &str,
+    ) {
+        let author = "https://remote.example/u/bob";
+        taverna::models::remote::RemoteActorModel::ensure(db, author)
+            .await
+            .unwrap();
+        let note: taverna::federation::protocol::Note = serde_json::from_value(serde_json::json!({
+            "type": "Note",
+            "id": format!("https://remote.example/post/{}", uuid::Uuid::new_v4()),
+            "attributedTo": author,
+            "to": [], "cc": [],
+            "name": title,
+            "content": "from another instance",
+            "published": chrono::Utc::now().to_rfc3339(),
+        }))
+        .unwrap();
+        taverna::models::remote::RemotePostModel::upsert(
+            db,
+            &note,
+            Some(community_id),
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_community_feed_includes_remote_posts() {
+        let (server, ctx) = crate::common::test_server_and_ctx().await;
+        let db = &ctx.db;
+        seed_first_user(db).await;
+        let user = UserModel::find_by_username(db, "admin")
+            .await
+            .unwrap()
+            .unwrap();
+        let community =
+            CommunityModel::create(db, "mixed", "Mixed", None, user.id, "http://localhost:5150")
+                .await
+                .unwrap();
+        PostModel::create(
+            db,
+            Some(community.id),
+            user.id,
+            "Local headline",
+            Some("b"),
+            None,
+            "http://localhost:5150",
+        )
+        .await
+        .unwrap();
+        remote_post_in(db, community.id, "Remote headline").await;
+
+        let body = server.get("/c/mixed").await.text();
+        assert!(body.contains("Local headline"), "local post missing");
+        assert!(body.contains("Remote headline"), "remote post missing");
+        assert!(body.contains("bob@remote.example"), "remote author missing");
+    }
+
+    async fn seed_many_posts(db: &sea_orm::DatabaseConnection, n: usize) -> uuid::Uuid {
+        seed_first_user(db).await;
+        let user = UserModel::find_by_username(db, "admin")
+            .await
+            .unwrap()
+            .unwrap();
+        let community =
+            CommunityModel::create(db, "busy", "Busy", None, user.id, "http://localhost:5150")
+                .await
+                .unwrap();
+        for i in 0..n {
+            PostModel::create(
+                db,
+                Some(community.id),
+                user.id,
+                &format!("Busy post {i:02}"),
+                Some("b"),
+                None,
+                "http://localhost:5150",
+            )
+            .await
+            .unwrap();
+        }
+        community.id
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_keyset_pagination_first_page() {
+        let (server, ctx) = crate::common::test_server_and_ctx().await;
+        let community_id = seed_many_posts(&ctx.db, 30).await;
+
+        let page = taverna::models::feed::community_feed(&ctx.db, community_id, None, 25)
+            .await
+            .unwrap();
+        assert_eq!(page.items.len(), 25);
+        assert!(page.next_cursor.is_some());
+
+        let body = server.get("/c/busy").await.text();
+        assert!(
+            body.contains("?cursor="),
+            "first page should link to the next page"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_keyset_pagination_second_page() {
+        let (server, ctx) = crate::common::test_server_and_ctx().await;
+        let community_id = seed_many_posts(&ctx.db, 30).await;
+
+        let first = taverna::models::feed::community_feed(&ctx.db, community_id, None, 25)
+            .await
+            .unwrap();
+        let cursor_raw = first.next_cursor.clone().unwrap();
+        let cursor = taverna::models::feed::Cursor::decode(&cursor_raw).unwrap();
+        let second =
+            taverna::models::feed::community_feed(&ctx.db, community_id, Some(&cursor), 25)
+                .await
+                .unwrap();
+        assert_eq!(second.items.len(), 5);
+        assert!(second.next_cursor.is_none());
+
+        let first_ids: std::collections::HashSet<_> =
+            first.items.iter().map(|p| p.id.clone()).collect();
+        assert!(
+            second.items.iter().all(|p| !first_ids.contains(&p.id)),
+            "pages overlap"
+        );
+
+        // Over HTTP: page size is 20, so page two of 30 has the remaining 10.
+        let page1 = server.get("/c/busy").await.text();
+        let start = page1.find("?cursor=").unwrap() + "?cursor=".len();
+        let end = page1[start..].find('"').unwrap() + start;
+        let page2 = server
+            .get(&format!("/c/busy?cursor={}", &page1[start..end]))
+            .await
+            .text();
+        let count = |html: &str| html.matches("class=\"card post-card\"").count();
+        assert_eq!(count(&page1), 20);
+        assert_eq!(count(&page2), 10);
+    }
 }

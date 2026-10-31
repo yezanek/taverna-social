@@ -1,0 +1,21 @@
+# cargo-audit configuration (read by rustsec/audit-check in CI).
+# Keep this list in sync with [advisories].ignore in .github/deny.toml.
+# Every entry is transitive with no compatible fix; revisit on each
+# loco-rs / activitypub_federation upgrade.
+
+[advisories]
+ignore = [
+    # fxhash unmaintained, via selectors -> scraper -> loco-rs. No known CVE.
+    "RUSTSEC-2025-0057",
+    # unsafe-libyaml unmaintained, via serde_yaml -> loco-rs. No known CVE.
+    "RUSTSEC-2024-0449",
+    # rsa Marvin timing side channel. No fixed release exists; pulled in by
+    # activitypub_federation for HTTP signatures. We only sign (private key
+    # never used for decryption), which limits exposure.
+    "RUSTSEC-2023-0071",
+    # quick-xml 0.38 advisories, via opendal -> loco-rs storage. The fix is
+    # in quick-xml 0.41, which loco-rs 0.16 cannot use. Taverna never parses
+    # XML through opendal.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

@@ -1,4 +1,5 @@
 use crate::models::_entities::{users, users::ActiveModel};
+use crate::models::feed::{Cursor, Page};
 use activitypub_federation::http_signatures::generate_actor_keypair;
 use argon2::{
     Argon2,
@@ -6,7 +7,7 @@ use argon2::{
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    QueryOrder, QuerySelect, Set,
 };
 use tracing::instrument;
 
@@ -69,9 +70,9 @@ impl UserModel {
             .map_err(|e| UserError::Other(anyhow::anyhow!("Keypair generation failed: {}", e)))?;
         let (public_key, private_key) = keypair;
 
-        let ap_id = format!("{}/u/{}", base_url.trim_end_matches('/'), &username);
-        let inbox_url = format!("{}/inbox", &ap_id);
-        let followers_url = format!("{}/followers", &ap_id);
+        let ap_id = format!("{}/u/{}", base_url.trim_end_matches('/'), username);
+        let inbox_url = format!("{}/inbox", ap_id);
+        let followers_url = format!("{}/followers", ap_id);
 
         let user = ActiveModel {
             id: Set(uuid::Uuid::new_v4()),
@@ -401,19 +402,27 @@ impl UserModel {
         Ok(())
     }
 
-    /// Lists all users with pagination, ordered by username.
+    /// Lists all users keyset-paginated, ordered by username.
     #[instrument(skip(db))]
     pub async fn list_all(
         db: &DatabaseConnection,
-        page: u64,
-        per_page: u64,
-    ) -> Result<(Vec<users::Model>, u64), sea_orm::DbErr> {
-        let paginator = users::Entity::find()
+        cursor: Option<&Cursor>,
+        limit: u64,
+    ) -> Result<Page<users::Model>, sea_orm::DbErr> {
+        let mut query = users::Entity::find();
+        if let Some(c) = cursor {
+            query = query.filter(users::Column::Username.gt(c.key.clone()));
+        }
+        let rows = query
             .order_by_asc(users::Column::Username)
-            .paginate(db, per_page);
-        let num_pages = paginator.num_pages().await?;
-        let users = paginator.fetch_page(page).await?;
-        Ok((users, num_pages))
+            .limit(limit + 1)
+            .all(db)
+            .await?;
+        Ok(Page::from_rows(rows, limit, |r| Cursor {
+            score: None,
+            published_at: None,
+            key: r.username.clone(),
+        }))
     }
 
     /// Verifies a plaintext password against the stored argon2 hash.

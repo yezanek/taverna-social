@@ -57,8 +57,10 @@ impl Entity {
     ) -> Result<Model, DbErr> {
         let model = ActiveModel {
             id: Set(Uuid::new_v4()),
-            follower_id: Set(follower_id),
+            follower_id: Set(Some(follower_id)),
+            remote_follower_ap_id: Set(None),
             following_id: Set(Some(following_id)),
+            remote_following_ap_id: Set(None),
             community_id: Set(None),
             ap_id: Set(None),
             accepted: Set(true),

@@ -1,4 +1,4 @@
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
@@ -15,6 +15,7 @@ use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::comments::CommentModel;
+use crate::models::feed::CursorQuery;
 use crate::models::follows::Entity as FollowEntity;
 use crate::models::posts::PostModel;
 use crate::models::users::UserModel;
@@ -129,7 +130,7 @@ pub async fn profile(
 
     let bio_rendered = user.bio.as_deref().map(render_markdown).unwrap_or_default();
 
-    let (posts, _num_pages) = PostModel::list_for_author(&ctx.db, user.id, 0, PER_PAGE)
+    let posts = PostModel::list_for_author(&ctx.db, user.id, None, PER_PAGE)
         .await
         .map_err(|_| Error::InternalServerError)?;
 
@@ -158,7 +159,8 @@ pub async fn profile(
             "follower_count": follower_count,
             "following_count": following_count,
             "is_following": is_following,
-            "posts": posts,
+            "posts": posts.items,
+            "next_cursor": posts.next_cursor,
             "active_tab": "posts",
             "csrf_token": csrf_token,
             "avatar_letter": avatar_letter,
@@ -171,6 +173,7 @@ pub async fn profile(
 }
 
 /// Shows a user's profile filtered to the posts tab.
+#[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn profile_posts(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -180,13 +183,12 @@ pub async fn profile_posts(
     Extension(taverna): Extension<TavernaConfig>,
     Extension(theme): Extension<CurrentTheme>,
     Path(username): Path<String>,
+    Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
     let user = UserModel::find_by_username(&ctx.db, &username)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
-
-    let page: u64 = 0;
 
     let follower_count = FollowEntity::count_followers(&ctx.db, user.id)
         .await
@@ -206,7 +208,7 @@ pub async fn profile_posts(
 
     let bio_rendered = user.bio.as_deref().map(render_markdown).unwrap_or_default();
 
-    let (posts, _num_pages) = PostModel::list_for_author(&ctx.db, user.id, page, PER_PAGE)
+    let posts = PostModel::list_for_author(&ctx.db, user.id, page.cursor().as_ref(), PER_PAGE)
         .await
         .map_err(|_| Error::InternalServerError)?;
 
@@ -235,7 +237,8 @@ pub async fn profile_posts(
             "follower_count": follower_count,
             "following_count": following_count,
             "is_following": is_following,
-            "posts": posts,
+            "posts": posts.items,
+            "next_cursor": posts.next_cursor,
             "active_tab": "posts",
             "csrf_token": csrf_token,
             "avatar_letter": avatar_letter,
@@ -249,6 +252,7 @@ pub async fn profile_posts(
 }
 
 /// Shows a user's profile filtered to the comments tab.
+#[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn profile_comments(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -258,13 +262,12 @@ pub async fn profile_comments(
     Extension(taverna): Extension<TavernaConfig>,
     Extension(theme): Extension<CurrentTheme>,
     Path(username): Path<String>,
+    Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
     let user = UserModel::find_by_username(&ctx.db, &username)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
-
-    let page: u64 = 0;
 
     let follower_count = FollowEntity::count_followers(&ctx.db, user.id)
         .await
@@ -284,8 +287,8 @@ pub async fn profile_comments(
 
     let bio_rendered = user.bio.as_deref().map(render_markdown).unwrap_or_default();
 
-    let (comments_with_posts, _num_pages) =
-        CommentModel::list_for_author(&ctx.db, user.id, page, PER_PAGE)
+    let comments_with_posts =
+        CommentModel::list_for_author(&ctx.db, user.id, page.cursor().as_ref(), PER_PAGE)
             .await
             .map_err(|_| Error::InternalServerError)?;
 
@@ -314,7 +317,8 @@ pub async fn profile_comments(
             "follower_count": follower_count,
             "following_count": following_count,
             "is_following": is_following,
-            "comments": comments_with_posts,
+            "comments": comments_with_posts.items,
+            "next_cursor": comments_with_posts.next_cursor,
             "active_tab": "comments",
             "csrf_token": csrf_token,
             "avatar_letter": avatar_letter,
@@ -371,7 +375,7 @@ pub async fn follow(
             "object": target.ap_id,
         });
         let inboxes = vec![target.inbox_url.clone()];
-        crate::workers::deliver_activity::enqueue_to_followers(
+        crate::workers::deliver_activity::enqueue_activity(
             &ctx.db,
             &follow_activity,
             &current_user.ap_id,
@@ -462,7 +466,7 @@ pub async fn unfollow(
             },
         });
         let inboxes = vec![target.inbox_url.clone()];
-        crate::workers::deliver_activity::enqueue_to_followers(
+        crate::workers::deliver_activity::enqueue_activity(
             &ctx.db,
             &undo_activity,
             &current_user.ap_id,
@@ -617,12 +621,14 @@ pub async fn update_settings(
             "to": [current_user.followers_url],
             "published": chrono::Utc::now().to_rfc3339(),
         });
-        let inboxes =
-            crate::workers::deliver_activity::get_user_follower_inboxes(&ctx.db, current_user.id)
-                .await
-                .map_err(|e| Error::string(&e.to_string()))?;
+        let inboxes = crate::workers::deliver_activity::get_user_follower_inboxes_deduplicated(
+            &ctx.db,
+            current_user.id,
+        )
+        .await
+        .map_err(|e| Error::string(&e.to_string()))?;
         if !inboxes.is_empty() {
-            crate::workers::deliver_activity::enqueue_to_followers(
+            crate::workers::deliver_activity::enqueue_activity(
                 &ctx.db,
                 &update,
                 &current_user.ap_id,
@@ -774,12 +780,14 @@ pub async fn create_profile_post(
             "published": chrono::Utc::now().to_rfc3339(),
         });
 
-        let inboxes =
-            crate::workers::deliver_activity::get_user_follower_inboxes(&ctx.db, current_user.id)
-                .await
-                .map_err(|e| Error::string(&e.to_string()))?;
+        let inboxes = crate::workers::deliver_activity::get_user_follower_inboxes_deduplicated(
+            &ctx.db,
+            current_user.id,
+        )
+        .await
+        .map_err(|e| Error::string(&e.to_string()))?;
         if !inboxes.is_empty() {
-            crate::workers::deliver_activity::enqueue_to_followers(
+            crate::workers::deliver_activity::enqueue_activity(
                 &ctx.db,
                 &create,
                 &current_user.ap_id,

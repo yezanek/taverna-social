@@ -1,8 +1,9 @@
 use crate::models::_entities::{communities, communities::ActiveModel, community_members};
+use crate::models::feed::{Cursor, Page};
 use activitypub_federation::http_signatures::generate_actor_keypair;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
 };
 use tracing::instrument;
 use uuid::Uuid;
@@ -60,9 +61,9 @@ impl CommunityModel {
 
         let keypair = generate_actor_keypair()?;
         let base = base_url.trim_end_matches('/');
-        let ap_id = format!("{}/c/{}", base, &slug);
-        let inbox_url = format!("{}/inbox", &ap_id);
-        let followers_url = format!("{}/followers", &ap_id);
+        let ap_id = format!("{}/c/{}", base, slug);
+        let inbox_url = format!("{}/inbox", ap_id);
+        let followers_url = format!("{}/followers", ap_id);
 
         let community = ActiveModel {
             id: Set(Uuid::new_v4()),
@@ -127,19 +128,27 @@ impl CommunityModel {
             .await
     }
 
-    /// Lists all communities with pagination, ordered by slug.
+    /// Lists all communities keyset-paginated, ordered by slug.
     #[instrument(skip(db))]
     pub async fn list_all(
         db: &DatabaseConnection,
-        page: u64,
-        per_page: u64,
-    ) -> Result<(Vec<communities::Model>, u64), sea_orm::DbErr> {
-        let paginator = communities::Entity::find()
+        cursor: Option<&Cursor>,
+        limit: u64,
+    ) -> Result<Page<communities::Model>, sea_orm::DbErr> {
+        let mut query = communities::Entity::find();
+        if let Some(c) = cursor {
+            query = query.filter(communities::Column::Slug.gt(c.key.clone()));
+        }
+        let rows = query
             .order_by_asc(communities::Column::Slug)
-            .paginate(db, per_page);
-        let num_pages = paginator.num_pages().await?;
-        let communities = paginator.fetch_page(page).await?;
-        Ok((communities, num_pages))
+            .limit(limit + 1)
+            .all(db)
+            .await?;
+        Ok(Page::from_rows(rows, limit, |r| Cursor {
+            score: None,
+            published_at: None,
+            key: r.slug.clone(),
+        }))
     }
 
     /// Returns the role of a user in a community, if they are a member.

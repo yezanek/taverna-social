@@ -309,7 +309,6 @@ pub(crate) fn validate_csrf(
 }
 
 /// Renders a template with a fresh CSRF cookie, carrying over existing cookie jar.
-#[allow(clippy::result_large_err)]
 fn render_with_csrf(
     v: &TeraView,
     jar: CookieJar,

@@ -40,4 +40,17 @@
 {% else %}
   <p>No comments yet.</p>
 {% endif %}
+
+{% if remote_comments %}
+  <h3 style="margin-top:1.5rem">Replies from other instances</h3>
+  {% for rc in remote_comments %}
+    <div class="card comment remote-comment" style="margin-bottom:0.5rem">
+      <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.25rem">
+        <a href="{{ rc.author_ap_id }}" target="_blank" rel="noopener noreferrer" style="color:var(--link)">{{ rc.author_name }}</a>
+        · {{ rc.score }} points
+      </div>
+      <div>{{ rc.body_rendered | safe }}</div>
+    </div>
+  {% endfor %}
+{% endif %}
 {% endblock %}

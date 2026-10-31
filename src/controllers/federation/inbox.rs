@@ -5,7 +5,7 @@ use sea_orm::DatabaseConnection;
 use tracing::instrument;
 
 use crate::federation::protocol::TavernaActivity;
-use crate::federation::traits::{DbCommunity, DbUser};
+use crate::federation::traits::RemoteActor;
 
 fn map_inbox_error(e: anyhow::Error) -> Error {
     let msg = format!("{:#}", e);
@@ -32,7 +32,7 @@ pub async fn user_inbox(
     data: Data<DatabaseConnection>,
     activity_data: ActivityData,
 ) -> Result<Response> {
-    receive_activity::<TavernaActivity, DbUser, DatabaseConnection>(activity_data, &data)
+    receive_activity::<TavernaActivity, RemoteActor, DatabaseConnection>(activity_data, &data)
         .await
         .map_err(map_inbox_error)?;
     Ok(axum::Json(serde_json::json!({"status": "ok"})).into_response())
@@ -45,7 +45,7 @@ pub async fn community_inbox(
     data: Data<DatabaseConnection>,
     activity_data: ActivityData,
 ) -> Result<Response> {
-    receive_activity::<TavernaActivity, DbCommunity, DatabaseConnection>(activity_data, &data)
+    receive_activity::<TavernaActivity, RemoteActor, DatabaseConnection>(activity_data, &data)
         .await
         .map_err(map_inbox_error)?;
     Ok(axum::Json(serde_json::json!({"status": "ok"})).into_response())

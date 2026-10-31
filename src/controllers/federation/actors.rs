@@ -1,5 +1,4 @@
 use axum::{Extension, extract::Path, response::IntoResponse};
-use futures::future::join_all;
 use loco_rs::prelude::*;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde_json::json;
@@ -76,16 +75,9 @@ pub async fn user_followers(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    let follower_futures: Vec<_> = follows
-        .iter()
-        .map(|f| users::Entity::find_by_id(f.follower_id).one(&ctx.db))
-        .collect();
-    let follower_results = join_all(follower_futures).await;
-    let follower_ids: Vec<String> = follower_results
-        .into_iter()
-        .filter_map(|r| r.ok().flatten())
-        .map(|u| u.ap_id)
-        .collect();
+    let follower_ids = follower_ap_ids(&ctx.db, &follows)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
 
     let collection = json!({
         "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
@@ -118,19 +110,16 @@ pub async fn user_following(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    let following_futures: Vec<_> = follows
+    let mut following_ids: Vec<String> = follows
         .iter()
-        .filter_map(|f| {
-            f.following_id
-                .map(|id| users::Entity::find_by_id(id).one(&ctx.db))
-        })
+        .filter_map(|f| f.remote_following_ap_id.clone())
         .collect();
-    let following_results = join_all(following_futures).await;
-    let following_ids: Vec<String> = following_results
-        .into_iter()
-        .filter_map(|r| r.ok().flatten())
-        .map(|u| u.ap_id)
-        .collect();
+    let local_ids: Vec<uuid::Uuid> = follows.iter().filter_map(|f| f.following_id).collect();
+    following_ids.extend(
+        local_ap_ids(&ctx.db, local_ids)
+            .await
+            .map_err(|_| Error::InternalServerError)?,
+    );
 
     let collection = json!({
         "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
@@ -213,16 +202,9 @@ pub async fn community_followers(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    let follower_futures: Vec<_> = follows
-        .iter()
-        .map(|f| users::Entity::find_by_id(f.follower_id).one(&ctx.db))
-        .collect();
-    let follower_results = join_all(follower_futures).await;
-    let follower_ids: Vec<String> = follower_results
-        .into_iter()
-        .filter_map(|r| r.ok().flatten())
-        .map(|u| u.ap_id)
-        .collect();
+    let follower_ids = follower_ap_ids(&ctx.db, &follows)
+        .await
+        .map_err(|_| Error::InternalServerError)?;
 
     let collection = json!({
         "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
@@ -283,4 +265,36 @@ pub async fn community_outbox(
     });
 
     Ok(axum::Json(collection).into_response())
+}
+
+/// AP ids of local users, fetched in one query.
+async fn local_ap_ids(
+    db: &sea_orm::DatabaseConnection,
+    ids: Vec<uuid::Uuid>,
+) -> std::result::Result<Vec<String>, sea_orm::DbErr> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(users::Entity::find()
+        .filter(users::Column::Id.is_in(ids))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|u| u.ap_id)
+        .collect())
+}
+
+/// AP ids of the followers in `follows`: remote followers directly, local
+/// followers looked up in one query.
+async fn follower_ap_ids(
+    db: &sea_orm::DatabaseConnection,
+    follows: &[follows::Model],
+) -> std::result::Result<Vec<String>, sea_orm::DbErr> {
+    let mut ids: Vec<String> = follows
+        .iter()
+        .filter_map(|f| f.remote_follower_ap_id.clone())
+        .collect();
+    let local_ids: Vec<uuid::Uuid> = follows.iter().filter_map(|f| f.follower_id).collect();
+    ids.extend(local_ap_ids(db, local_ids).await?);
+    Ok(ids)
 }

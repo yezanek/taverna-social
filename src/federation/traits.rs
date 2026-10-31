@@ -4,8 +4,10 @@ use activitypub_federation::traits::{Actor, Object};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use url::Url;
 
-use crate::federation::protocol::{Group, Note, NoteKind, Person};
-use crate::models::_entities::{comments, communities, posts, users};
+use crate::federation::protocol::{Group, Person, RemoteActorJson};
+use crate::models::_entities::{communities, remote_actors, users};
+use crate::models::remote::RemoteActorModel;
+use chrono::{DateTime, Utc};
 use sea_orm::Set;
 
 /// Newtype wrapper for local user that implements Object + Actor.
@@ -79,72 +81,21 @@ impl Object for DbUser {
         Ok(())
     }
 
+    /// `users` holds local accounts only (ADR-017). Remote people are
+    /// [`RemoteActor`]s, so this only resolves ids of our own users.
     async fn from_json(json: Self::Kind, data: &Data<Self::DataType>) -> Result<Self, Self::Error> {
         let db = data.app_data();
-        let id = json.id.as_str();
-
-        if let Some(existing) = users::Entity::find()
-            .filter(users::Column::ApId.eq(id))
+        let user = users::Entity::find()
+            .filter(users::Column::ApId.eq(json.id.as_str()))
             .one(db)
             .await?
-        {
-            return Ok(DbUser::new(existing)?);
-        }
-
-        // Create remote user
-        let uuid = uuid::Uuid::new_v4();
-        let inbox_url = json.inbox.as_str().to_string();
-        let ap_id = id.to_string();
-        let public_key_raw = json
-            .public_key
-            .as_ref()
-            .and_then(|pk| pk.get("publicKeyPem"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                anyhow::anyhow!("Missing or empty publicKeyPem for remote user {}", id)
+                anyhow::anyhow!(
+                    "{} is not a local user; remote actors live in remote_actors",
+                    json.id
+                )
             })?;
-
-        if !public_key_raw.starts_with("-----BEGIN") {
-            anyhow::bail!(
-                "Invalid PEM format for remote user {}: does not start with -----BEGIN",
-                id
-            );
-        }
-
-        let public_key = public_key_raw.to_string();
-
-        let new_user = users::ActiveModel {
-            id: Set(uuid),
-            username: Set(format!("remote_{}", &uuid.to_string()[..8])),
-            email: Set(None),
-            password_hash: Set(None),
-            display_name: Set(json.name.clone()),
-            bio: Set(json.summary.clone()),
-            avatar_url: Set(json.icon.map(|u| u.to_string())),
-            ap_id: Set(ap_id),
-            public_key: Set(public_key),
-            private_key: Set(None),
-            is_local: Set(false),
-            is_admin: Set(false),
-            is_banned: Set(false),
-            email_verified: Set(false),
-            standing_score: Set(0),
-            suspended_at: Set(None),
-            inbox_url: Set(inbox_url),
-            shared_inbox_url: Set(None),
-            followers_url: Set(json
-                .followers
-                .as_ref()
-                .map(|u| u.to_string())
-                .unwrap_or_default()),
-            last_fetched_at: Set(None),
-            created_at: Set(chrono::Utc::now().into()),
-            updated_at: Set(chrono::Utc::now().into()),
-        };
-
-        let saved = new_user.insert(db).await?;
-        Ok(DbUser::new(saved)?)
+        Ok(DbUser::new(user)?)
     }
 }
 
@@ -331,63 +282,52 @@ impl Actor for DbCommunity {
     }
 }
 
-// ── Post (Note) wrapper ──────────────────────────────────────
+// ── Remote actor (any type) ──────────────────────────────────
 
+/// A cached actor from another instance (`remote_actors`, Phase 8).
+///
+/// This is the actor type inboxes verify HTTP signatures against: the crate
+/// resolves the signer through [`RemoteActor::read_from_id`] and, when the
+/// cached copy is missing or stale, fetches it and stores it via
+/// [`RemoteActor::from_json`].
 #[derive(Clone, Debug)]
-pub struct DbPost(pub posts::Model, pub Url);
+pub struct RemoteActor(pub remote_actors::Model, pub Url);
 
-impl DbPost {
-    pub fn new(model: posts::Model) -> Result<Self, url::ParseError> {
+impl RemoteActor {
+    pub fn new(model: remote_actors::Model) -> Result<Self, url::ParseError> {
         let url = model.ap_id.parse()?;
-        Ok(DbPost(model, url))
+        Ok(RemoteActor(model, url))
     }
 }
 
 #[async_trait::async_trait]
-impl Object for DbPost {
+impl Object for RemoteActor {
     type DataType = DatabaseConnection;
-    type Kind = Note;
+    type Kind = RemoteActorJson;
     type Error = anyhow::Error;
 
     fn id(&self) -> &Url {
         &self.1
     }
 
+    fn last_refreshed_at(&self) -> Option<DateTime<Utc>> {
+        Some(self.0.fetched_at.with_timezone(&Utc))
+    }
+
     async fn read_from_id(
         object_id: Url,
         data: &Data<Self::DataType>,
     ) -> Result<Option<Self>, Self::Error> {
-        let db = data.app_data();
-        let post = posts::Entity::find()
-            .filter(posts::Column::ApId.eq(object_id.as_str()))
-            .one(db)
-            .await?;
-        match post {
-            Some(p) => Ok(Some(DbPost::new(p)?)),
-            None => Ok(None),
+        match RemoteActorModel::find(data.app_data(), object_id.as_str()).await? {
+            Some(actor) if !actor.public_key.is_empty() => Ok(Some(RemoteActor::new(actor)?)),
+            // Placeholder rows have no key yet: report them missing so the
+            // crate fetches the real actor before verifying a signature.
+            _ => Ok(None),
         }
     }
 
-    async fn into_json(self, data: &Data<Self::DataType>) -> Result<Self::Kind, Self::Error> {
-        let db = data.app_data();
-        let author = users::Entity::find_by_id(self.0.author_id)
-            .one(db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Author not found for post {}", self.0.id))?;
-
-        Ok(Note {
-            kind: NoteKind::Note,
-            id: self.1.clone(),
-            attributed_to: author.ap_id.parse()?,
-            to: vec!["https://www.w3.org/ns/activitystreams#Public".parse()?],
-            cc: vec![],
-            content: self.0.body.clone(),
-            name: Some(self.0.title.clone()),
-            url: self.0.url.as_ref().and_then(|u| u.parse().ok()),
-            in_reply_to: None,
-            published: Some(self.0.published_at.format("%+").to_string()),
-            media_type: None,
-        })
+    async fn into_json(self, _data: &Data<Self::DataType>) -> Result<Self::Kind, Self::Error> {
+        Ok(serde_json::from_value(self.0.raw_json)?)
     }
 
     async fn verify(
@@ -400,201 +340,33 @@ impl Object for DbPost {
     }
 
     async fn from_json(json: Self::Kind, data: &Data<Self::DataType>) -> Result<Self, Self::Error> {
-        let db = data.app_data();
-        let id = json.id.as_str();
-
-        if let Some(existing) = posts::Entity::find()
-            .filter(posts::Column::ApId.eq(id))
-            .one(db)
-            .await?
-        {
-            return Ok(DbPost::new(existing)?);
-        }
-
-        let community_id = {
-            let mut found = None;
-            for to in &json.to {
-                if let Ok(Some(c)) = communities::Entity::find()
-                    .filter(communities::Column::FollowersUrl.eq(to.as_str()))
-                    .one(db)
-                    .await
-                {
-                    found = Some(c.id);
-                    break;
-                }
-            }
-            found
-        };
-
-        let author_ap_id = json.attributed_to.as_str();
-        let author = crate::federation::activities::ensure_remote_user(db, author_ap_id).await?;
-
-        let title = json.name.as_deref().unwrap_or("Untitled");
-        let content = json.content.as_deref().unwrap_or("");
-
-        let new_post = posts::ActiveModel {
-            id: Set(uuid::Uuid::new_v4()),
-            ap_id: Set(id.to_string()),
-            community_id: Set(community_id),
-            author_id: Set(author.id),
-            title: Set(title.to_string()),
-            body: Set(if content.is_empty() {
-                None
-            } else {
-                Some(content.to_string())
-            }),
-            url: Set(json.url.map(|u| u.to_string())),
-            score: Set(0),
-            comment_count: Set(0),
-            is_deleted: Set(false),
-            is_removed: Set(false),
-            is_locked: Set(false),
-            is_pinned: Set(false),
-            published_at: Set(chrono::Utc::now().into()),
-            created_at: Set(chrono::Utc::now().into()),
-            updated_at: Set(chrono::Utc::now().into()),
-        };
-
-        let saved = new_post.insert(db).await?;
-        Ok(DbPost::new(saved)?)
-    }
-}
-
-// ── Comment (Note) wrapper ───────────────────────────────────
-
-#[derive(Clone, Debug)]
-pub struct DbComment(pub comments::Model, pub Url);
-
-impl DbComment {
-    pub fn new(model: comments::Model) -> Result<Self, url::ParseError> {
-        let url = model.ap_id.parse()?;
-        Ok(DbComment(model, url))
+        let raw = serde_json::to_value(&json)?;
+        let model = RemoteActorModel::upsert_from_json(data.app_data(), &json, raw).await?;
+        Ok(RemoteActor::new(model)?)
     }
 }
 
 #[async_trait::async_trait]
-impl Object for DbComment {
-    type DataType = DatabaseConnection;
-    type Kind = Note;
-    type Error = anyhow::Error;
-
-    fn id(&self) -> &Url {
-        &self.1
+impl Actor for RemoteActor {
+    fn public_key_pem(&self) -> &str {
+        &self.0.public_key
     }
 
-    async fn read_from_id(
-        object_id: Url,
-        data: &Data<Self::DataType>,
-    ) -> Result<Option<Self>, Self::Error> {
-        let db = data.app_data();
-        let comment = comments::Entity::find()
-            .filter(comments::Column::ApId.eq(object_id.as_str()))
-            .one(db)
-            .await?;
-        match comment {
-            Some(c) => Ok(Some(DbComment::new(c)?)),
-            None => Ok(None),
-        }
+    fn private_key_pem(&self) -> Option<String> {
+        None
     }
 
-    async fn into_json(self, data: &Data<Self::DataType>) -> Result<Self::Kind, Self::Error> {
-        let db = data.app_data();
-        let author = users::Entity::find_by_id(self.0.author_id)
-            .one(db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Author not found for comment {}", self.0.id))?;
-        let post = posts::Entity::find_by_id(self.0.post_id)
-            .one(db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Post not found for comment {}", self.0.id))?;
-
-        Ok(Note {
-            kind: NoteKind::Note,
-            id: self.1.clone(),
-            attributed_to: author.ap_id.parse()?,
-            to: vec!["https://www.w3.org/ns/activitystreams#Public".parse()?],
-            cc: vec![],
-            content: Some(self.0.body.clone()),
-            name: None,
-            url: Some(self.1.clone()),
-            in_reply_to: Some(post.ap_id.parse()?),
-            published: Some(self.0.published_at.format("%+").to_string()),
-            media_type: None,
+    fn inbox(&self) -> Url {
+        self.0.inbox_url.parse().unwrap_or_else(|e| {
+            tracing::warn!("Invalid inbox URL for {}: {}", self.0.ap_id, e);
+            Url::parse("https://localhost/inbox").expect("inbox fallback URL")
         })
     }
 
-    async fn verify(
-        json: &Self::Kind,
-        expected_domain: &Url,
-        _data: &Data<Self::DataType>,
-    ) -> Result<(), Self::Error> {
-        verify_domains_match(&json.id, expected_domain)?;
-        Ok(())
-    }
-
-    async fn from_json(json: Self::Kind, data: &Data<Self::DataType>) -> Result<Self, Self::Error> {
-        let db = data.app_data();
-        let id = json.id.as_str();
-
-        if let Some(existing) = comments::Entity::find()
-            .filter(comments::Column::ApId.eq(id))
-            .one(db)
-            .await?
-        {
-            return Ok(DbComment::new(existing)?);
-        }
-
-        let in_reply_to = json
-            .in_reply_to
+    fn shared_inbox(&self) -> Option<Url> {
+        self.0
+            .shared_inbox_url
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Comment without inReplyTo"))?;
-
-        let parent_post = posts::Entity::find()
-            .filter(posts::Column::ApId.eq(in_reply_to.as_str()))
-            .one(db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Parent post not found: {}", in_reply_to))?;
-
-        // Check if in_reply_to points to another comment (vs. directly to the post)
-        let parent_comment = comments::Entity::find()
-            .filter(comments::Column::ApId.eq(in_reply_to.as_str()))
-            .one(db)
-            .await?;
-
-        let author_ap_id = json.attributed_to.as_str();
-        let author = crate::federation::activities::ensure_remote_user(db, author_ap_id).await?;
-
-        let content = json.content.as_deref().unwrap_or("");
-        let comment_id = uuid::Uuid::new_v4();
-        let comment_seg = format!("c{}", &comment_id.to_string().replace('-', "")[..8]);
-
-        let (parent_id, path) = if let Some(ref pc) = parent_comment {
-            let path = format!("{}.{}", pc.path, comment_seg);
-            (Set(Some(pc.id)), Set(path))
-        } else {
-            let post_seg = format!("c{}", &parent_post.id.to_string().replace('-', "")[..8]);
-            let path = format!("{}.{}", post_seg, comment_seg);
-            (Set(None), Set(path))
-        };
-
-        let new_comment = comments::ActiveModel {
-            id: Set(comment_id),
-            ap_id: Set(id.to_string()),
-            post_id: Set(parent_post.id),
-            author_id: Set(author.id),
-            parent_id,
-            path,
-            body: Set(content.to_string()),
-            score: Set(0),
-            is_deleted: Set(false),
-            is_removed: Set(false),
-            published_at: Set(chrono::Utc::now().into()),
-            created_at: Set(chrono::Utc::now().into()),
-            updated_at: Set(chrono::Utc::now().into()),
-        };
-
-        let saved = new_comment.insert(db).await?;
-        crate::models::posts::PostModel::increment_comment_count(db, parent_post.id).await?;
-        Ok(DbComment::new(saved)?)
+            .and_then(|u| u.parse().ok())
     }
 }

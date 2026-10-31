@@ -17,6 +17,7 @@ use crate::models::comments::CommentModel;
 use crate::models::communities::CommunityModel;
 use crate::models::community_bans::Entity as CommunityBansEntity;
 use crate::models::posts::PostModel;
+use crate::models::remote::RemoteCommentModel;
 use crate::models::users::UserModel;
 use crate::models::votes::VoteModel;
 use crate::views::helpers;
@@ -126,6 +127,26 @@ pub async fn detail(
         result
     };
 
+    let remote_comments: Vec<serde_json::Value> =
+        RemoteCommentModel::list_for_local_post(&ctx.db, post_id)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+            .into_iter()
+            .map(|(c, author)| {
+                let author_name = author
+                    .map(|a| format!("{}@{}", a.username, a.instance_domain))
+                    .unwrap_or_else(|| c.author_ap_id.clone());
+                json!({
+                    "ap_id": c.ap_id,
+                    "author_ap_id": c.author_ap_id,
+                    "author_name": author_name,
+                    "body_rendered": render_markdown(&c.body),
+                    "score": c.score,
+                    "published_at": c.published_at,
+                })
+            })
+            .collect();
+
     let user_vote = if let Some(ref user) = current_user {
         VoteModel::get_user_vote_on_post(&ctx.db, user.id, post_id)
             .await
@@ -159,6 +180,7 @@ pub async fn detail(
             "author": author,
             "body_rendered": body_rendered,
             "comments": comments_with_author,
+            "remote_comments": remote_comments,
             "user_vote": user_vote,
             "score_class": score_class,
             "target_id": post.id,
@@ -250,7 +272,7 @@ pub async fn vote(
             vec![post_author.inbox_url.clone()]
         };
         if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+            let _ = crate::workers::deliver_activity::enqueue_activity(
                 &ctx.db,
                 &vote_activity,
                 &current_user.ap_id,
@@ -413,14 +435,14 @@ pub async fn update_post(
             "published": chrono::Utc::now().to_rfc3339(),
         });
 
-        let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+        let inboxes = crate::workers::deliver_activity::get_follower_inboxes_deduplicated(
             &ctx.db,
             community.id,
         )
         .await
         .unwrap_or_default();
         if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+            let _ = crate::workers::deliver_activity::enqueue_activity(
                 &ctx.db,
                 &update,
                 &current_user.ap_id,
@@ -492,14 +514,14 @@ pub async fn delete(
             "published": chrono::Utc::now().to_rfc3339(),
         });
         if let Some(community_id) = post.community_id {
-            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_deduplicated(
                 &ctx.db,
                 community_id,
             )
             .await
             .unwrap_or_default();
             if !inboxes.is_empty() {
-                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                let _ = crate::workers::deliver_activity::enqueue_activity(
                     &ctx.db,
                     &delete,
                     &current_user.ap_id,
@@ -605,14 +627,14 @@ pub async fn create_comment(
             "published": chrono::Utc::now().to_rfc3339(),
         });
         if let Some(community_id) = post.community_id {
-            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_deduplicated(
                 &ctx.db,
                 community_id,
             )
             .await
             .unwrap_or_default();
             if !inboxes.is_empty() {
-                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                let _ = crate::workers::deliver_activity::enqueue_activity(
                     &ctx.db,
                     &create,
                     &current_user.ap_id,
@@ -704,7 +726,7 @@ pub async fn vote_comment(
             Vec::new()
         };
         if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+            let _ = crate::workers::deliver_activity::enqueue_activity(
                 &ctx.db,
                 &vote_activity,
                 &current_user.ap_id,
@@ -1009,14 +1031,14 @@ pub async fn update_comment(
             "published": chrono::Utc::now().to_rfc3339(),
         });
         if let Some(community_id) = post.community_id {
-            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_deduplicated(
                 &ctx.db,
                 community_id,
             )
             .await
             .unwrap_or_default();
             if !inboxes.is_empty() {
-                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                let _ = crate::workers::deliver_activity::enqueue_activity(
                     &ctx.db,
                     &update,
                     &current_user.ap_id,
@@ -1097,14 +1119,14 @@ pub async fn remove_comment(
             "published": chrono::Utc::now().to_rfc3339(),
         });
         if let Some(community_id) = post.community_id {
-            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+            let inboxes = crate::workers::deliver_activity::get_follower_inboxes_deduplicated(
                 &ctx.db,
                 community_id,
             )
             .await
             .unwrap_or_default();
             if !inboxes.is_empty() {
-                let _ = crate::workers::deliver_activity::enqueue_to_followers(
+                let _ = crate::workers::deliver_activity::enqueue_activity(
                     &ctx.db,
                     &delete,
                     &current_user.ap_id,

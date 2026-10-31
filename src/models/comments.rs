@@ -1,8 +1,9 @@
 use crate::models::_entities::{comments, communities, posts, votes};
-use sea_orm::sea_query::Value;
+use crate::models::feed::{Cursor, Page};
+use sea_orm::sea_query::{Expr, Value};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QueryResult, Set, Statement, TransactionTrait,
+    QueryFilter, QueryOrder, QueryResult, QuerySelect, Set, Statement, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -236,30 +237,45 @@ impl CommentModel {
         Ok(score)
     }
 
-    /// Lists non-deleted comments by a specific author with pagination,
-    /// enriched with post titles and community slugs.
+    /// Lists non-deleted comments by a specific author, newest first,
+    /// keyset-paginated, enriched with post titles and community slugs.
     #[instrument(skip(db))]
     pub async fn list_for_author(
         db: &DatabaseConnection,
         author_id: Uuid,
-        page: u64,
-        per_page: u64,
-    ) -> Result<(Vec<CommentWithPost>, u64), sea_orm::DbErr> {
-        let base_query = comments::Entity::find()
+        cursor: Option<&Cursor>,
+        limit: u64,
+    ) -> Result<Page<CommentWithPost>, sea_orm::DbErr> {
+        let mut query = comments::Entity::find()
             .filter(comments::Column::AuthorId.eq(author_id))
             .filter(comments::Column::IsDeleted.eq(false));
-
-        let num_pages = base_query
-            .clone()
-            .paginate(db, per_page)
-            .num_pages()
-            .await?;
-
-        let models = base_query
+        if let Some(c) = cursor
+            && let (Some(published_at), Ok(id)) = (c.published_at, Uuid::parse_str(&c.key))
+        {
+            query = query.filter(Expr::cust_with_values(
+                "(published_at, id) < ($1, $2)",
+                [Value::from(published_at), Value::from(id)],
+            ));
+        }
+        let mut models = query
             .order_by_desc(comments::Column::PublishedAt)
-            .paginate(db, per_page)
-            .fetch_page(page)
+            .order_by_desc(comments::Column::Id)
+            .limit(limit + 1)
+            .all(db)
             .await?;
+        let next_cursor = if models.len() as u64 > limit {
+            models.truncate(limit as usize);
+            models.last().map(|c| {
+                Cursor {
+                    score: None,
+                    published_at: Some(c.published_at),
+                    key: c.id.to_string(),
+                }
+                .encode()
+            })
+        } else {
+            None
+        };
 
         let post_ids: Vec<Uuid> = models.iter().map(|c| c.post_id).collect();
         let posts_map: HashMap<Uuid, posts::Model> = posts::Entity::find()
@@ -299,7 +315,10 @@ impl CommentModel {
             })
             .collect();
 
-        Ok((results, num_pages))
+        Ok(Page {
+            items: results,
+            next_cursor,
+        })
     }
 
     /// Updates the body of a comment (author edit).

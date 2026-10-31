@@ -1,4 +1,4 @@
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::{Extension, Form};
@@ -16,6 +16,7 @@ use crate::initializers::content_negotiation::RenderMode;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::communities::CommunityModel;
 use crate::models::community_bans::Entity as CommunityBansEntity;
+use crate::models::feed::{self, CursorQuery};
 use crate::models::posts::PostModel;
 use crate::models::users::UserModel;
 use crate::views::helpers;
@@ -53,9 +54,9 @@ pub async fn list(
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
+    Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
-    let page = 0;
-    let (communities, _num_pages) = CommunityModel::list_all(&ctx.db, page, PER_PAGE)
+    let communities = CommunityModel::list_all(&ctx.db, page.cursor().as_ref(), PER_PAGE)
         .await
         .map_err(|_| Error::InternalServerError)?;
 
@@ -71,7 +72,8 @@ pub async fn list(
         "communities/list.html",
         json!({
             "current_user": current_user,
-            "communities": communities,
+            "communities": communities.items,
+            "next_cursor": communities.next_cursor,
             "csrf_token": csrf_token,
         }),
         &theme,
@@ -80,6 +82,7 @@ pub async fn list(
 }
 
 /// Shows a community's feed (posts) or its ActivityPub actor representation.
+#[allow(clippy::too_many_arguments)]
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn feed(
     ViewEngine(v): ViewEngine<TeraView>,
@@ -89,6 +92,7 @@ pub async fn feed(
     Extension(theme): Extension<CurrentTheme>,
     Extension(render_mode): Extension<RenderMode>,
     Path(slug): Path<String>,
+    Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
@@ -134,7 +138,7 @@ pub async fn feed(
         false
     };
 
-    let (posts, _num_pages) = PostModel::list_for_community(&ctx.db, community.id, 0, PER_PAGE)
+    let posts = feed::community_feed(&ctx.db, community.id, page.cursor().as_ref(), PER_PAGE)
         .await
         .map_err(|_| Error::InternalServerError)?;
 
@@ -159,7 +163,8 @@ pub async fn feed(
             "community": community,
             "description_rendered": description_rendered,
             "is_member": is_member,
-            "posts": posts,
+            "posts": posts.items,
+            "next_cursor": posts.next_cursor,
             "csrf_token": csrf_token,
         }),
         &theme,
@@ -378,14 +383,14 @@ pub async fn create_post(
             "published": chrono::Utc::now().to_rfc3339(),
         });
 
-        let inboxes = crate::workers::deliver_activity::get_follower_inboxes_for_community(
+        let inboxes = crate::workers::deliver_activity::get_follower_inboxes_deduplicated(
             &ctx.db,
             community.id,
         )
         .await
         .unwrap_or_default();
         if !inboxes.is_empty()
-            && let Err(e) = crate::workers::deliver_activity::enqueue_to_followers(
+            && let Err(e) = crate::workers::deliver_activity::enqueue_activity(
                 &ctx.db,
                 &create,
                 &author.ap_id,
@@ -443,7 +448,7 @@ pub async fn join(
         });
         let inboxes = vec![community.inbox_url.clone()];
         if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+            let _ = crate::workers::deliver_activity::enqueue_activity(
                 &ctx.db,
                 &follow_activity,
                 &current_user.ap_id,
@@ -501,7 +506,7 @@ pub async fn leave(
         });
         let inboxes = vec![community.inbox_url.clone()];
         if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_to_followers(
+            let _ = crate::workers::deliver_activity::enqueue_activity(
                 &ctx.db,
                 &undo_activity,
                 &current_user.ap_id,

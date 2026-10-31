@@ -67,5 +67,6 @@
       <p>No comments yet.</p>
     {% endif %}
   {% endif %}
+  {% if next_cursor %}<div class="load-more" style="text-align:center;margin:1rem 0"><a href="/u/{{ profile_user.username }}/{{ active_tab }}?cursor={{ next_cursor }}" class="btn">Load more</a></div>{% endif %}
 </div>
 {% endblock %}

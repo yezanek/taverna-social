@@ -504,21 +504,21 @@ test_follower_inbox_query_under_50ms_with_10000_followers()
 
 ## Deliverables Checklist
 
-- [ ] `m009_federated_cache.rs` — remote_actors, remote_posts, remote_comments tables
-- [ ] `m010_performance_indexes.rs` — all indexes from Part B1
-- [ ] Remote users migrated from `users` to `remote_actors` in m009 up()
-- [ ] `federation_objects` table dropped in m009 up()
-- [ ] All ActivityHandler::receive implementations write to remote_* tables
-- [ ] `community_feed` SQL view created and used in feed handlers
-- [ ] No `SendActivityTask::send` called directly in any web handler
-- [ ] Keyset pagination implemented for all feed and list endpoints
-- [ ] `get_follower_inboxes_deduplicated` implemented and used for fan-out
-- [ ] `expire_remote_cache` worker registered and scheduled daily
-- [ ] Connection pool config updated in both development.toml and production.toml
-- [ ] All federation tests updated to reference remote_* tables
-- [ ] New tests added to semantic test files (not a phase8_test.rs)
-- [ ] `cargo check`, `cargo clippy -- -D warnings`, `cargo fmt` pass
-- [ ] `cargo test` passes
+- [x] `m009_federated_cache.rs` — remote_actors, remote_posts, remote_comments tables
+- [x] `m010_performance_indexes.rs` — all indexes from Part B1
+- [x] Remote users migrated from `users` to `remote_actors` in m009 up()
+- [x] `federation_objects` table dropped in m009 up()
+- [x] All ActivityHandler::receive implementations write to remote_* tables
+- [x] `community_feed` SQL view created and used in feed handlers
+- [x] No `SendActivityTask::send` called directly in any web handler
+- [x] Keyset pagination implemented for all feed and list endpoints
+- [x] `get_follower_inboxes_deduplicated` implemented and used for fan-out
+- [x] `expire_remote_cache` worker registered and scheduled daily
+- [x] Connection pool config updated in both development.toml and production.toml
+- [x] All federation tests updated to reference remote_* tables
+- [x] New tests added to semantic test files (not a phase8_test.rs)
+- [x] `cargo check`, `cargo clippy -- -D warnings`, `cargo fmt` pass
+- [x] `cargo test` passes
 
 ---
 

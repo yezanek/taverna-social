@@ -31,10 +31,10 @@ mailer:
 database:
   uri: {{ get_env(name="TEST_DATABASE_URL", default="postgres://localhost:5432/taverna_test") }}
   enable_logging: false
-  connect_timeout: 500
+  connect_timeout: 5000
   idle_timeout: 500
-  min_connections: 1
-  max_connections: 5
+  min_connections: 0
+  max_connections: 10
   auto_migrate: true
   dangerously_truncate: true
   dangerously_recreate: true
