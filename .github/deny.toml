@@ -59,6 +59,11 @@ ignore = [
     # The maintained fork rustc-hash has a different lib name so a
     # straight [patch] won't work without upstream changes.
     "RUSTSEC-2025-0057",
+    # The entries below mirror .cargo/audit.toml; see the reasons there.
+    "RUSTSEC-2024-0449", # unsafe-libyaml unmaintained (serde_yaml -> loco-rs)
+    "RUSTSEC-2023-0071", # rsa Marvin, no fixed release (activitypub_federation)
+    "RUSTSEC-2026-0194", # quick-xml 0.38 (opendal -> loco-rs), fix needs 0.41
+    "RUSTSEC-2026-0195", # quick-xml 0.38 (opendal -> loco-rs), fix needs 0.41
 ]
 
 [sources]
