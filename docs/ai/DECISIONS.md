@@ -251,6 +251,7 @@ cache expiry once a day. Neither loop runs in the test environment.
 `outbound_activities`, so no activity was actually delivered. pgmq is
 installed but not used by the code, and Loco's scheduler needs a separate
 process; an in-process loop keeps deployment to one binary plus PostgreSQL.
+CI no longer builds pgmq for the test job, since no code or migration uses it.
 
 ---
 

@@ -83,32 +83,6 @@ jobs:
         with:
           key: ${{ env.RUST_CACHE_KEY }}
 
-      - name: Install pgmq
-        run: |
-          # PostgreSQL 16 (server for pgrx initdb, plus headers) is not in the
-          # runner's default apt sources.
-          sudo apt-get update
-          sudo apt-get install -y postgresql-common
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y postgresql-16 postgresql-server-dev-16 libclang-dev
-          PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config
-          cargo install --locked cargo-pgrx --version 0.18.0
-          cargo pgrx init --pg16 "$PG_CONFIG"
-          git clone --depth 1 https://github.com/tembo-io/pgmq.git /tmp/pgmq
-          cd /tmp/pgmq && git checkout 885251cf4dcb4853d7fa253f56e382d84d5f0821 && cargo pgrx install --pg-config "$PG_CONFIG"
-
-          # Copy extension files into the PostgreSQL service container
-          PG_CONTAINER="${{ job.services.postgres.id }}"
-          PG_PKGLIBDIR=$(docker exec "$PG_CONTAINER" pg_config --pkglibdir)
-          PG_SHAREDIR=$(docker exec "$PG_CONTAINER" pg_config --sharedir)
-          docker cp "$("$PG_CONFIG" --pkglibdir)/pgmq.so" "$PG_CONTAINER:$PG_PKGLIBDIR/"
-          docker cp "$("$PG_CONFIG" --sharedir)/extension/pgmq.control" "$PG_CONTAINER:$PG_SHAREDIR/extension/"
-          for f in "$("$PG_CONFIG" --sharedir)/extension"/pgmq--*.sql; do
-            docker cp "$f" "$PG_CONTAINER:$PG_SHAREDIR/extension/"
-          done
-          docker exec "$PG_CONTAINER" psql -U taverna -d taverna_test \
-            -c "CREATE EXTENSION IF NOT EXISTS pgmq;"
-
       - name: Install sea-orm-cli
         run: cargo install sea-orm-cli --version 1.1.1 --locked
 
