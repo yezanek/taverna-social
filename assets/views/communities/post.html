@@ -18,6 +18,30 @@
     {% endif %}
   </div>
   {% include "partials/vote_buttons.html" %}
+  {% if current_user and (current_user.id == post.author_id or can_moderate) %}
+  <div class="post-actions" style="margin-top:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/delete" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn">Delete</button>
+    </form>
+    {% if can_moderate %}
+    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/pin" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn">{% if post.is_pinned %}Unpin{% else %}Pin{% endif %}</button>
+    </form>
+    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/lock" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn">{% if post.is_locked %}Unlock{% else %}Lock{% endif %}</button>
+    </form>
+    {% if not post.is_removed %}
+    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/remove" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn">Remove</button>
+    </form>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
 </div>
 
 <h3>Comments</h3>

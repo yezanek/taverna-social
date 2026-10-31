@@ -1,7 +1,7 @@
 use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use loco_rs::prelude::*;
 use sea_orm::PaginatorTrait;
 use serde::Deserialize;
@@ -9,7 +9,7 @@ use serde_json::json;
 use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
-use crate::controllers::auth::validate_csrf;
+use crate::controllers::csrf;
 use crate::initializers::auth_middleware::AuthUser;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::_entities::{community_members, posts};
@@ -99,13 +99,7 @@ pub async fn dashboard(
         })
         .collect();
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -138,7 +132,7 @@ pub async fn ban_user(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -177,7 +171,7 @@ pub async fn unban_user(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -223,32 +217,11 @@ pub async fn settings(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    let settings = crate::models::_entities::instance_settings::Entity::find()
-        .one(&ctx.db)
+    let settings = crate::models::instance_settings::load(&ctx.db)
         .await
-        .map_err(|_| Error::InternalServerError)?
-        .unwrap_or_else(|| crate::models::_entities::instance_settings::Model {
-            id: true,
-            community_creation_open: true,
-            require_min_account_age: false,
-            min_account_age_days: 30,
-            require_email_verified: false,
-            require_min_standing: false,
-            min_standing_score: 0,
-            disqualify_if_content_removed: false,
-            disqualify_if_suspended: false,
-            instance_name: "Taverna".to_string(),
-            open_registrations: true,
-            updated_at: chrono::DateTime::default(),
-        });
+        .map_err(|_| Error::InternalServerError)?;
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -277,7 +250,7 @@ pub async fn update_settings(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -330,7 +303,7 @@ pub async fn suspend_user(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -371,7 +344,7 @@ pub async fn unsuspend_user(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -402,7 +375,7 @@ pub async fn force_verify_user(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -433,7 +406,7 @@ pub async fn delete_community(
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 

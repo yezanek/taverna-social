@@ -265,7 +265,9 @@ mod tests {
         }
         let body: serde_json::Value = serde_json::from_str(&body_text).unwrap();
         assert_eq!(body["type"], "Note");
-        assert_eq!(body["content"], "A test comment");
+        // `content` is HTML (ActivityPub); the markdown travels in `source`.
+        assert_eq!(body["content"], "<p>A test comment</p>\n");
+        assert_eq!(body["source"]["content"], "A test comment");
         assert_eq!(body["inReplyTo"], post.ap_id);
     }
 

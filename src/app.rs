@@ -111,6 +111,10 @@ impl Hooks for App {
                 get(posts::edit_comment_form).post(posts::update_comment),
             )
             .add(
+                "/c/{slug}/posts/{id}/comments/{cid}/delete",
+                post(posts::delete_comment),
+            )
+            .add(
                 "/c/{slug}/posts/{id}/comments/{cid}/remove",
                 post(posts::remove_comment),
             );
@@ -211,9 +215,7 @@ impl Hooks for App {
         let taverna_config = TavernaConfig::from_env()
             .map_err(|e| loco_rs::Error::string(&format!("Config error: {}", e)))?;
 
-        initializers::first_run::init(ctx.db.clone());
-
-        let router = router.layer(initializers::first_run::FirstRunLayer);
+        let router = router.layer(initializers::first_run::FirstRunLayer::new(ctx.db.clone()));
 
         let mut router = router.layer(axum::middleware::from_fn(
             initializers::content_negotiation::content_negotiation_middleware,
@@ -238,6 +240,12 @@ impl Hooks for App {
             initializers::theme_middleware::theme_middleware,
         ));
 
+        // Runs inside the TavernaConfig extension below, so it can read it.
+        let router = router.layer(axum::middleware::from_fn_with_state(
+            ctx.clone(),
+            initializers::auth_middleware::refresh_session,
+        ));
+
         let router = router.layer(Extension(taverna_config));
 
         let router = router.layer(axum::middleware::from_fn(error_pages_middleware));
@@ -251,9 +259,7 @@ impl Hooks for App {
 
     async fn connect_workers(ctx: &AppContext, queue: &loco_rs::bgworker::Queue) -> Result<()> {
         queue
-            .register(crate::workers::deliver_activity::DeliverActivityWorker {
-                db: ctx.db.clone(),
-            })
+            .register(crate::workers::deliver_activity::DeliverActivityWorker::new(ctx.db.clone()))
             .await?;
         queue
             .register(
@@ -305,9 +311,9 @@ async fn error_pages_middleware(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let theme = extract_theme(req.headers()).unwrap_or_else(|| "light".to_string());
+    let theme = extract_theme(req.headers()).unwrap_or_default().as_str();
     let view_engine = req.extensions().get::<ViewEngine<TeraView>>().cloned();
-    let mut response = next.run(req).await;
+    let response = next.run(req).await;
 
     let status = response.status();
     if status != axum::http::StatusCode::NOT_FOUND
@@ -315,17 +321,6 @@ async fn error_pages_middleware(
         && status != axum::http::StatusCode::INTERNAL_SERVER_ERROR
     {
         return response;
-    }
-
-    // Clear auth cookie on 403 (banned user detection)
-    if status == axum::http::StatusCode::FORBIDDEN {
-        let headers = response.headers_mut();
-        headers.append(
-            axum::http::header::SET_COOKIE,
-            axum::http::HeaderValue::from_static(
-                "access_token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
-            ),
-        );
     }
 
     if accept.contains("application/json")
@@ -360,10 +355,17 @@ async fn error_pages_middleware(
         Err(_) => return response,
     };
 
-    (
+    // Keep any cookies the handler set (e.g. the session being cleared for
+    // a banned account) when swapping in the HTML error page.
+    let mut page = (
         status,
         [(axum::http::header::CONTENT_TYPE, "text/html")],
         html,
     )
-        .into_response()
+        .into_response();
+    for cookie in response.headers().get_all(axum::http::header::SET_COOKIE) {
+        page.headers_mut()
+            .append(axum::http::header::SET_COOKIE, cookie.clone());
+    }
+    page
 }

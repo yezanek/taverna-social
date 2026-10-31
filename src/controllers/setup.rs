@@ -1,11 +1,15 @@
+use axum::http::HeaderMap;
 use axum::{Extension, Form};
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use loco_rs::prelude::*;
+use sea_orm::sea_query::Expr;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::instrument;
 
-use crate::initializers::first_run;
+use crate::common::config::TavernaConfig;
+use crate::controllers::csrf;
+use crate::initializers::first_run::{self, FirstRunState};
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::_entities::{instance_settings, users};
 use crate::models::users::{UserError, UserModel};
@@ -20,6 +24,8 @@ pub struct SetupForm {
     pub password_confirm: String,
     #[serde(default)]
     pub open_registrations: Option<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
 }
 
 #[instrument(skip(v, ctx, theme, jar))]
@@ -38,13 +44,7 @@ pub async fn wizard_form(
             loco_rs::controller::ErrorDetail::with_reason("Setup already completed"),
         ));
     }
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -58,10 +58,13 @@ pub async fn wizard_form(
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
-#[instrument(skip(ctx, _jar, form))]
+#[instrument(skip(ctx, jar, headers, taverna, first_run_state, form))]
 pub async fn wizard_submit(
     State(ctx): State<AppContext>,
-    _jar: CookieJar,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    Extension(first_run_state): Extension<FirstRunState>,
+    headers: HeaderMap,
     Form(form): Form<SetupForm>,
 ) -> Result<Response> {
     let is_first = first_run::is_first_run(&ctx.db)
@@ -74,6 +77,10 @@ pub async fn wizard_submit(
         ));
     }
 
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    }
+
     let instance_name = form.instance_name.trim().to_string();
     if instance_name.is_empty() {
         return Err(Error::BadRequest("Instance name is required".to_string()));
@@ -83,21 +90,18 @@ pub async fn wizard_submit(
         return Err(Error::BadRequest("Passwords do not match".to_string()));
     }
 
-    if form.password.len() < 8 {
+    if form.password.len() < crate::models::users::MIN_PASSWORD_LEN {
         return Err(Error::BadRequest(
             "Password must be at least 8 characters".to_string(),
         ));
     }
-
-    let base_url =
-        std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     let user = UserModel::create_local(
         &ctx.db,
         &form.username,
         &form.email,
         &form.password,
-        &base_url,
+        &taverna.base_url,
     )
     .await
     .map_err(|e| match e {
@@ -108,16 +112,10 @@ pub async fn wizard_submit(
         _ => Error::InternalServerError,
     })?;
 
-    let user_id = user.id;
-    let mut user_active: users::ActiveModel = users::Entity::find_by_id(user_id)
-        .one(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?
-        .ok_or_else(|| Error::InternalServerError)?
-        .into();
-    user_active.is_admin = sea_orm::Set(true);
-    user_active
-        .update(&ctx.db)
+    users::Entity::update_many()
+        .col_expr(users::Column::IsAdmin, Expr::value(true))
+        .filter(users::Column::Id.eq(user.id))
+        .exec(&ctx.db)
         .await
         .map_err(|_| Error::InternalServerError)?;
 
@@ -136,7 +134,7 @@ pub async fn wizard_submit(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    first_run::bust_cache();
+    first_run_state.mark_complete();
 
     Ok(format::redirect("/").into_response())
 }

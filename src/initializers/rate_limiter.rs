@@ -9,6 +9,10 @@ use loco_rs::Result;
 use loco_rs::app::{AppContext, Initializer};
 use std::num::NonZeroU32;
 use std::sync::LazyLock;
+use std::time::Duration;
+
+/// How often idle client entries are dropped from the limiters.
+const PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
 fn client_key(req: &Request) -> String {
     req.headers()
@@ -74,14 +78,24 @@ impl Initializer for RateLimiterInitializer {
     }
 
     async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
-        if std::env::var("RATE_LIMITING_ENABLED")
-            .ok()
+        let enabled = std::env::var("RATE_LIMITING_ENABLED")
             .map(|v| v == "1" || v == "true")
-            .unwrap_or(true)
-        {
-            Ok(router.layer(middleware::from_fn(rate_limit_middleware)))
-        } else {
-            Ok(router)
+            .unwrap_or(true);
+        if !enabled {
+            return Ok(router);
         }
+        // Keyed limiters keep one entry per client forever unless pruned;
+        // drop the ones whose quota has fully replenished.
+        tokio::spawn(async {
+            let mut interval = tokio::time::interval(PRUNE_INTERVAL);
+            loop {
+                interval.tick().await;
+                for limiter in [&*INBOX_LIMITER, &*AUTH_LIMITER, &*DEFAULT_LIMITER] {
+                    limiter.retain_recent();
+                    limiter.shrink_to_fit();
+                }
+            }
+        });
+        Ok(router.layer(middleware::from_fn(rate_limit_middleware)))
     }
 }

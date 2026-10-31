@@ -1,34 +1,30 @@
+//! First-run guard (SPEC §3.5 "Admin Onboarding"): while the instance has no
+//! local users, every web request is redirected to `/setup`.
+//!
+//! The state lives in the layer (one per app), not in a process global, so
+//! tests that boot several apps against fresh databases do not leak state.
+use axum::extract::Request;
 use axum::response::{IntoResponse, Redirect, Response};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
-use std::time::Instant;
 use tower::{Layer, Service};
 
 use crate::models::_entities::users;
 
-static FIRST_RUN_CACHE: std::sync::OnceLock<Mutex<Option<(Instant, bool)>>> =
-    std::sync::OnceLock::new();
+/// Paths that stay reachable before setup is complete.
+const ALWAYS_ALLOWED: &[&str] = &[
+    "/static/",
+    "/setup",
+    "/.well-known/",
+    "/nodeinfo/",
+    "/verify-email",
+];
 
-pub(crate) static DB: std::sync::OnceLock<Mutex<Option<DatabaseConnection>>> =
-    std::sync::OnceLock::new();
-
-fn cache_db() -> &'static Mutex<Option<DatabaseConnection>> {
-    DB.get_or_init(|| Mutex::new(None))
-}
-
-pub fn init(db: DatabaseConnection) {
-    if let Ok(mut guard) = cache_db().lock() {
-        *guard = Some(db);
-    }
-}
-
-fn cache() -> &'static Mutex<Option<(Instant, bool)>> {
-    FIRST_RUN_CACHE.get_or_init(|| Mutex::new(None))
-}
-
+/// Returns true when the instance has no local users yet.
 pub async fn is_first_run(db: &DatabaseConnection) -> Result<bool, sea_orm::DbErr> {
     let count = users::Entity::find()
         .filter(users::Column::IsLocal.eq(true))
@@ -37,42 +33,83 @@ pub async fn is_first_run(db: &DatabaseConnection) -> Result<bool, sea_orm::DbEr
     Ok(count == 0)
 }
 
-pub fn bust_cache() {
-    if let Ok(mut guard) = cache().lock() {
-        *guard = Some((Instant::now(), false));
-    }
+/// Shared first-run state. Inserted into every request's extensions so the
+/// setup handler can mark setup as complete.
+#[derive(Clone)]
+pub struct FirstRunState {
+    db: DatabaseConnection,
+    setup_complete: Arc<AtomicBool>,
 }
 
-async fn cached_is_first_run(db: &DatabaseConnection) -> Result<bool, sea_orm::DbErr> {
-    {
-        let guard = cache()
-            .lock()
-            .map_err(|_| sea_orm::DbErr::Custom("Mutex poisoned".to_string()))?;
-
-        if let Some((cached_at, cached_value)) = *guard
-            && cached_at.elapsed().as_secs() < 60
-        {
-            return Ok(cached_value);
+impl FirstRunState {
+    #[must_use]
+    pub fn new(db: DatabaseConnection) -> Self {
+        Self {
+            db,
+            setup_complete: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    let fresh = is_first_run(db).await?;
-
-    if let Ok(mut guard) = cache().lock() {
-        *guard = Some((Instant::now(), fresh));
+    /// Records that the first admin exists, so later requests skip the query.
+    pub fn mark_complete(&self) {
+        self.setup_complete.store(true, Ordering::Release);
     }
 
-    Ok(fresh)
+    /// True while the instance still needs its first admin. Once local users
+    /// exist the answer is cached for the lifetime of the app.
+    async fn needs_setup(&self) -> bool {
+        if self.setup_complete.load(Ordering::Acquire) {
+            return false;
+        }
+        match is_first_run(&self.db).await {
+            Ok(true) => true,
+            Ok(false) => {
+                self.mark_complete();
+                false
+            }
+            Err(e) => {
+                // Fail open: a database hiccup must not lock everyone out.
+                tracing::warn!(error = %e, "first-run check failed");
+                false
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct FirstRunLayer {
+    state: FirstRunState,
+}
+
+impl FirstRunLayer {
+    #[must_use]
+    pub fn new(db: DatabaseConnection) -> Self {
+        Self {
+            state: FirstRunState::new(db),
+        }
+    }
+}
+
+impl<S> Layer<S> for FirstRunLayer {
+    type Service = FirstRunGuard<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        FirstRunGuard {
+            inner,
+            state: self.state.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct FirstRunGuard<S> {
     inner: S,
+    state: FirstRunState,
 }
 
-impl<S> Service<axum::extract::Request> for FirstRunGuard<S>
+impl<S> Service<Request> for FirstRunGuard<S>
 where
-    S: Service<axum::extract::Request, Response = Response> + Clone + Send + 'static,
+    S: Service<Request, Response = Response> + Clone + Send + 'static,
     S::Future: Send + 'static,
 {
     type Response = Response;
@@ -83,42 +120,26 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: axum::extract::Request) -> Self::Future {
-        let path = req.uri().path().to_string();
+    fn call(&mut self, mut req: Request) -> Self::Future {
+        req.extensions_mut().insert(self.state.clone());
 
-        if path.starts_with("/static/")
-            || path.starts_with("/setup")
-            || path.starts_with("/.well-known/")
-            || path.starts_with("/nodeinfo/")
-            || path.starts_with("/verify-email")
-        {
-            let future = self.inner.call(req);
-            return Box::pin(future);
+        let path = req.uri().path();
+        if ALWAYS_ALLOWED.iter().any(|p| path.starts_with(p)) {
+            return Box::pin(self.inner.call(req));
         }
 
-        let db = cache_db().lock().ok().and_then(|g| g.clone());
-        let mut inner = self.inner.clone();
+        // Take the service that was driven to readiness and leave a fresh
+        // clone in its place (the tower "clone and swap" idiom).
+        let clone = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, clone);
+        let state = self.state.clone();
 
         Box::pin(async move {
-            match db {
-                Some(db) => match cached_is_first_run(&db).await {
-                    Ok(true) => Ok(Redirect::to("/setup").into_response()),
-                    Ok(false) => inner.call(req).await,
-                    Err(_) => inner.call(req).await,
-                },
-                None => inner.call(req).await,
+            if state.needs_setup().await {
+                Ok(Redirect::to("/setup").into_response())
+            } else {
+                inner.call(req).await
             }
         })
-    }
-}
-
-#[derive(Clone)]
-pub struct FirstRunLayer;
-
-impl<S> Layer<S> for FirstRunLayer {
-    type Service = FirstRunGuard<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        FirstRunGuard { inner }
     }
 }

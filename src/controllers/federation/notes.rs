@@ -2,108 +2,91 @@ use activitypub_federation::FEDERATION_CONTENT_TYPE;
 use axum::{extract::Path, http::header::CONTENT_TYPE, response::IntoResponse};
 use loco_rs::prelude::*;
 use sea_orm::EntityTrait;
-use serde_json::json;
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::models::_entities::{posts, users};
+use crate::federation::outbound;
+use crate::models::_entities::{communities, posts, users};
 use crate::models::comments::CommentModel;
 
-/// Returns a post as an ActivityPub Note object.
+fn db_error(e: impl std::fmt::Display) -> Error {
+    tracing::error!(error = %e, "database error");
+    Error::InternalServerError
+}
+
+fn federation_json(object: serde_json::Value) -> Response {
+    (
+        [(CONTENT_TYPE, FEDERATION_CONTENT_TYPE)],
+        axum::Json(object),
+    )
+        .into_response()
+}
+
+/// `GET /posts/:id`: a local post as an ActivityPub Note.
 #[instrument(skip(ctx))]
 pub async fn post_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -> Result<Response> {
     let post = posts::Entity::find_by_id(id)
         .one(&ctx.db)
         .await
-        .map_err(|_| Error::InternalServerError)?
-        .ok_or_else(|| Error::NotFound)?;
-
+        .map_err(db_error)?
+        .filter(|p| !p.is_deleted && !p.is_removed)
+        .ok_or(Error::NotFound)?;
     let author = users::Entity::find_by_id(post.author_id)
         .one(&ctx.db)
         .await
-        .map_err(|_| Error::InternalServerError)?
-        .ok_or_else(|| Error::NotFound)?;
+        .map_err(db_error)?
+        .ok_or(Error::NotFound)?;
+    let community = match post.community_id {
+        Some(cid) => communities::Entity::find_by_id(cid)
+            .one(&ctx.db)
+            .await
+            .map_err(db_error)?,
+        None => None,
+    };
 
-    let note = json!({
-        "@context": [
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1"
-        ],
-        "id": post.ap_id,
-        "type": "Note",
-        "attributedTo": author.ap_id,
-        "name": post.title,
-        "content": post.body,
-        "published": post.published_at.format("%+").to_string(),
-        "url": post.ap_id,
-        "to": ["https://www.w3.org/ns/activitystreams#Public"],
-        "cc": [],
-    });
-
-    Ok(([(CONTENT_TYPE, FEDERATION_CONTENT_TYPE)], axum::Json(note)).into_response())
+    Ok(federation_json(outbound::post_note(
+        &post,
+        &author.ap_id,
+        community.as_ref(),
+        &author.followers_url,
+    )))
 }
 
-/// Returns a comment as an ActivityPub Note object with inReplyTo.
+/// `GET /comments/:id`: a local comment as an ActivityPub Note.
 #[instrument(skip(ctx))]
 pub async fn comment_note(State(ctx): State<AppContext>, Path(id): Path<Uuid>) -> Result<Response> {
     let comment = CommentModel::find_by_id(&ctx.db, id)
         .await
-        .map_err(|e| {
-            tracing::error!("Comment note: DB error finding comment {}: {}", id, e);
-            Error::InternalServerError
-        })?
-        .ok_or_else(|| {
-            tracing::error!("Comment note: comment not found: {}", id);
-            Error::NotFound
-        })?;
-
+        .map_err(db_error)?
+        .filter(|c| !c.is_deleted && !c.is_removed)
+        .ok_or(Error::NotFound)?;
     let author = users::Entity::find_by_id(comment.author_id)
         .one(&ctx.db)
         .await
-        .map_err(|e| {
-            tracing::error!(
-                "Comment note: DB error finding author {}: {}",
-                comment.author_id,
-                e
-            );
-            Error::InternalServerError
-        })?
-        .ok_or_else(|| {
-            tracing::error!("Comment note: author not found: {}", comment.author_id);
-            Error::NotFound
-        })?;
+        .map_err(db_error)?
+        .ok_or(Error::NotFound)?;
+    let in_reply_to = match comment.parent_id {
+        Some(parent_id) => CommentModel::find_by_id(&ctx.db, parent_id)
+            .await
+            .map_err(db_error)?
+            .map(|p| p.ap_id),
+        None => None,
+    };
+    let in_reply_to = match in_reply_to {
+        Some(ap_id) => ap_id,
+        None => {
+            posts::Entity::find_by_id(comment.post_id)
+                .one(&ctx.db)
+                .await
+                .map_err(db_error)?
+                .ok_or(Error::NotFound)?
+                .ap_id
+        }
+    };
 
-    let post = posts::Entity::find_by_id(comment.post_id)
-        .one(&ctx.db)
-        .await
-        .map_err(|e| {
-            tracing::error!(
-                "Comment note: DB error finding post {}: {}",
-                comment.post_id,
-                e
-            );
-            Error::InternalServerError
-        })?
-        .ok_or_else(|| {
-            tracing::error!("Comment note: post not found: {}", comment.post_id);
-            Error::NotFound
-        })?;
-
-    let note = json!({
-        "@context": [
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1"
-        ],
-        "id": comment.ap_id,
-        "type": "Note",
-        "attributedTo": author.ap_id,
-        "content": comment.body,
-        "inReplyTo": post.ap_id,
-        "published": comment.published_at.format("%+").to_string(),
-        "url": comment.ap_id,
-        "to": ["https://www.w3.org/ns/activitystreams#Public"],
-        "cc": [],
-    });
-
-    Ok(([(CONTENT_TYPE, FEDERATION_CONTENT_TYPE)], axum::Json(note)).into_response())
+    Ok(federation_json(outbound::comment_note(
+        &comment,
+        &author.ap_id,
+        &in_reply_to,
+    )))
 }

@@ -260,3 +260,35 @@ CI no longer builds pgmq for the test job, since no code or migration uses it.
 Loco 0.16 reads `config/<env>.yaml`; the repository's config files are YAML
 (`development.yaml`, `test.yaml`, and the `production.example.yaml` template).
 ADR-016 describes an intent that the framework does not support.
+
+---
+
+## ADR-022: Session tokens carry a `kind`, and the refresh token is used
+
+**Decision:** JWT claims include `kind: "access" | "refresh"`, and
+`verify_token` checks it. The `refresh_session` middleware renews a missing
+or expired access token from a valid refresh token: it swaps the new token
+into the request's `Cookie` header (so `AuthUser` sees it) and sets it on
+the response. `/logout` and `/static/` are skipped.
+
+**Reason:** SPEC §3.4 specifies a 1h access token and a 7d refresh token,
+but the refresh token was never read, so every session ended after an hour.
+Both tokens also had identical claims, so a 7-day refresh token was accepted
+as an access token.
+
+---
+
+## ADR-023: Outbound activities are built in `federation::outbound`
+
+**Decision:** Controllers build Notes and activities with the helpers in
+`src/federation/outbound.rs` and queue them with `outbound::send*`, which
+log enqueue failures instead of failing the request. Notes carry HTML in
+`content` and the markdown in `source`; posts set `attributedTo` to the
+author and `audience` to the community. A Follow's id is deterministic
+(`{actor}/follows/{target_id}`) so `Undo{Follow}` names the same object.
+The Announce of a remote post wraps the original `Create` (SPEC §6.4).
+
+**Reason:** The same JSON was hand-written in a dozen handlers and had
+drifted: posts were attributed to the community (which our own inbox
+rejects), `Undo{Follow}` referenced an id that was never sent, and the
+Announce carried a bare Note.

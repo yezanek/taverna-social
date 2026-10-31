@@ -6,10 +6,12 @@ use serde::Serializer;
 use tracing::instrument;
 use url::Url;
 
+use crate::federation::outbound;
 use crate::federation::protocol::*;
 use crate::models::_entities::{comments, communities, follows, posts, users};
 use crate::models::remote::{
-    RemoteActorModel, RemoteCommentModel, RemotePostModel, record_received_activity,
+    RemoteActorModel, RemoteCommentModel, RemotePostModel, forget_received_activity,
+    record_received_activity,
 };
 use crate::models::votes::VoteModel;
 use crate::workers::deliver_activity::{enqueue_activity, get_follower_inboxes_deduplicated};
@@ -116,7 +118,7 @@ impl Activity for TavernaActivity {
             }
         }
 
-        match self {
+        let result = match self {
             TavernaActivity::CreateActivity(a) => handle_create(db, a).await,
             TavernaActivity::UpdateActivity(a) => handle_update(db, a).await,
             TavernaActivity::DeleteActivity(a) => handle_delete(db, a).await,
@@ -139,7 +141,16 @@ impl Activity for TavernaActivity {
             TavernaActivity::UndoDislikeActivity(a) => {
                 handle_undo_vote(db, a.actor.as_str(), a.object.object.as_str()).await
             }
+        };
+
+        // Only a processed activity counts as received: if handling failed,
+        // forget it so the sender's retry is not skipped as a duplicate.
+        if result.is_err()
+            && let Err(e) = forget_received_activity(db, &activity_id).await
+        {
+            tracing::warn!(error = %e, activity_id, "failed to clear failed activity");
         }
+        result
     }
 }
 
@@ -199,33 +210,21 @@ async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), 
     }
 
     let community = addressed_community(db, note, &activity).await?;
-    let (post, is_new) =
+    let (_, is_new) =
         RemotePostModel::upsert(db, note, community.as_ref().map(|c| c.id), raw).await?;
 
     // ★ THE ANNOUNCE PATTERN (SPEC.md §6.4)
     // A post addressed to one of our communities is announced to its followers.
     if is_new && let Some(community) = community.filter(|c| c.is_local) {
-        let announce_id = build_announce_id(&community.ap_id, &community.id, &Uuid::new_v4());
-        let announce_note = serde_json::json!({
-            "@context": AP_CONTEXT,
-            "id": post.ap_id,
-            "type": "Note",
-            "attributedTo": post.author_ap_id,
-            "content": post.body,
-            "name": post.title,
-            "published": post.published_at.to_rfc3339(),
-            "url": post.url.clone().unwrap_or_else(|| post.ap_id.clone()),
-            "to": [community.followers_url],
-            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
-        });
+        // Lemmy expects the original Create wrapped in the Announce.
         let announce_activity = serde_json::json!({
             "@context": AP_CONTEXT,
-            "id": announce_id,
+            "id": outbound::activity_id(&community.ap_id),
             "type": "Announce",
             "actor": community.ap_id,
-            "object": announce_note,
-            "to": [community.followers_url],
-            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
+            "object": serde_json::to_value(&activity)?,
+            "to": [outbound::AP_PUBLIC],
+            "cc": [community.followers_url],
             "published": chrono::Utc::now().to_rfc3339(),
         });
 

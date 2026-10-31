@@ -7,7 +7,7 @@ use argon2::{
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set,
+    QueryOrder, QuerySelect, Set, SqlErr,
 };
 use tracing::instrument;
 
@@ -28,6 +28,23 @@ pub enum UserError {
     Other(#[from] anyhow::Error),
 }
 
+/// Minimum password length accepted anywhere.
+pub const MIN_PASSWORD_LEN: usize = 8;
+
+/// Hashes `password` with argon2id on the blocking pool.
+async fn hash_password(password: &str) -> Result<String, UserError> {
+    let password = password.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .map(|h| h.to_string())
+            .map_err(|e| UserError::Other(anyhow::anyhow!("Password hashing failed: {e}")))
+    })
+    .await
+    .map_err(|e| UserError::Other(anyhow::anyhow!("Blocking task failed: {e}")))?
+}
+
 pub struct UserModel;
 
 impl UserModel {
@@ -43,32 +60,29 @@ impl UserModel {
         let username = username.trim().to_lowercase();
         let email = email.trim().to_lowercase();
 
-        if username.len() < 3 || username.len() > 30 {
+        // SPEC §3.4: ASCII letters, digits and underscore, 3-30 characters.
+        // ASCII-only keeps usernames safe in URLs, WebFinger and AP ids.
+        if !(3..=30).contains(&username.len()) {
             return Err(UserError::InvalidUsername(
                 "Username must be between 3 and 30 characters".to_string(),
             ));
         }
 
-        if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        if !username
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
             return Err(UserError::InvalidUsername(
                 "Username can only contain letters, numbers, and underscores".to_string(),
             ));
         }
 
-        let salt = SaltString::generate(&mut OsRng);
-        let password = password.to_string();
-        let password_hash = tokio::task::spawn_blocking(move || {
-            Argon2::default()
-                .hash_password(password.as_bytes(), &salt)
-                .map_err(|e| UserError::Other(anyhow::anyhow!("Password hashing failed: {}", e)))
-                .map(|h| h.to_string())
-        })
-        .await
-        .map_err(|e| UserError::Other(anyhow::anyhow!("Blocking task failed: {}", e)))??;
-
-        let keypair = Self::generate_keypair()
-            .map_err(|e| UserError::Other(anyhow::anyhow!("Keypair generation failed: {}", e)))?;
-        let (public_key, private_key) = keypair;
+        let password_hash = hash_password(password).await?;
+        // RSA key generation is CPU-bound; keep it off the async workers.
+        let (public_key, private_key) = tokio::task::spawn_blocking(Self::generate_keypair)
+            .await
+            .map_err(|e| UserError::Other(anyhow::anyhow!("Blocking task failed: {e}")))?
+            .map_err(|e| UserError::Other(anyhow::anyhow!("Keypair generation failed: {e}")))?;
 
         let ap_id = format!("{}/u/{}", base_url.trim_end_matches('/'), username);
         let inbox_url = format!("{}/inbox", ap_id);
@@ -99,19 +113,15 @@ impl UserModel {
             updated_at: Set(chrono::Utc::now().into()),
         };
 
-        let user = user.insert(db).await.map_err(|e| {
-            let error_str = e.to_string();
-            if error_str.contains("duplicate key value") {
-                if error_str.contains("username") {
-                    return UserError::UsernameTaken;
-                }
-                if error_str.contains("email") {
-                    return UserError::EmailTaken;
-                }
+        user.insert(db).await.map_err(|e| match e.sql_err() {
+            Some(SqlErr::UniqueConstraintViolation(detail)) if detail.contains("username") => {
+                UserError::UsernameTaken
             }
-            UserError::Db(e)
-        })?;
-        Ok(user)
+            Some(SqlErr::UniqueConstraintViolation(detail)) if detail.contains("email") => {
+                UserError::EmailTaken
+            }
+            _ => UserError::Db(e),
+        })
     }
 
     /// Finds a user by their email address.
@@ -146,9 +156,21 @@ impl UserModel {
         db: &DatabaseConnection,
         id: uuid::Uuid,
     ) -> Result<Option<users::Model>, sea_orm::DbErr> {
+        users::Entity::find_by_id(id).one(db).await
+    }
+
+    /// Loads several users by id in one query.
+    #[instrument(skip(db, ids))]
+    pub async fn find_by_ids(
+        db: &DatabaseConnection,
+        ids: &[uuid::Uuid],
+    ) -> Result<Vec<users::Model>, sea_orm::DbErr> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
         users::Entity::find()
-            .filter(users::Column::Id.eq(id))
-            .one(db)
+            .filter(users::Column::Id.is_in(ids.iter().copied()))
+            .all(db)
             .await
     }
 
@@ -223,13 +245,14 @@ impl UserModel {
         Ok(result)
     }
 
-    /// Updates a user's email address, checking for duplicates.
+    /// Updates a user's email address, checking for duplicates. Returns true
+    /// when the address changed (and so needs verifying again).
     #[instrument(skip(db))]
     pub async fn update_email(
         db: &DatabaseConnection,
         user_id: uuid::Uuid,
         email: &str,
-    ) -> Result<(), UserError> {
+    ) -> Result<bool, UserError> {
         let email = email.trim().to_lowercase();
         if !email.contains('@') {
             return Err(UserError::Validation("Invalid email".to_string()));
@@ -242,19 +265,24 @@ impl UserModel {
             return Err(UserError::EmailTaken);
         }
 
-        let mut user: users::ActiveModel = users::Entity::find_by_id(user_id)
+        let current = users::Entity::find_by_id(user_id)
             .one(db)
             .await?
-            .ok_or(UserError::Validation("User not found".to_string()))?
-            .into();
-        user.email = Set(Some(email.to_string()));
+            .ok_or(UserError::Validation("User not found".to_string()))?;
+        if current.email.as_deref() == Some(email.as_str()) {
+            return Ok(false);
+        }
+        let mut user: users::ActiveModel = current.into();
+        user.email = Set(Some(email));
+        // A new address has not been verified yet (SPEC §3.6).
+        user.email_verified = Set(false);
         user.updated_at = Set(chrono::Utc::now().into());
         user.update(db).await?;
-        Ok(())
+        Ok(true)
     }
 
     /// Changes a user's password after verifying the current password.
-    #[instrument(skip(db))]
+    #[instrument(skip(db, current_password, new_password))]
     pub async fn change_password(
         db: &DatabaseConnection,
         user_id: uuid::Uuid,
@@ -272,28 +300,15 @@ impl UserModel {
             ));
         }
 
-        if new_password.len() < 8 {
+        if new_password.len() < MIN_PASSWORD_LEN {
             return Err(UserError::Validation(
                 "New password must be at least 8 characters".to_string(),
             ));
         }
 
-        let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
-        let password = new_password.to_string();
-        let password_hash = tokio::task::spawn_blocking(move || {
-            Argon2::default()
-                .hash_password(password.as_bytes(), &salt)
-                .map_err(|e| UserError::Other(anyhow::anyhow!("Password hashing failed: {}", e)))
-                .map(|h| h.to_string())
-        })
-        .await
-        .map_err(|e| UserError::Other(anyhow::anyhow!("Blocking task failed: {}", e)))??;
+        let password_hash = hash_password(new_password).await?;
 
-        let mut active: users::ActiveModel = users::Entity::find_by_id(user_id)
-            .one(db)
-            .await?
-            .ok_or(UserError::Validation("User not found".to_string()))?
-            .into();
+        let mut active: users::ActiveModel = user.into();
         active.password_hash = Set(Some(password_hash));
         active.updated_at = Set(chrono::Utc::now().into());
         active.update(db).await?;
@@ -324,7 +339,7 @@ impl UserModel {
         db: &DatabaseConnection,
         user_id: uuid::Uuid,
         delta: i32,
-    ) -> Result<(), UserError> {
+    ) -> Result<(), sea_orm::DbErr> {
         use sea_orm::{ConnectionTrait, Statement};
         let stmt = Statement::from_sql_and_values(
             sea_orm::DbBackend::Postgres,
@@ -344,7 +359,6 @@ impl UserModel {
         db: &DatabaseConnection,
         user_id: uuid::Uuid,
     ) -> Result<bool, sea_orm::DbErr> {
-        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
         let post_removed = crate::models::_entities::posts::Entity::find()
             .filter(crate::models::_entities::posts::Column::AuthorId.eq(user_id))
             .filter(crate::models::_entities::posts::Column::IsRemoved.eq(true))

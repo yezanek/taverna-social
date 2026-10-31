@@ -15,7 +15,9 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::federation::protocol::{Note, RemoteActorJson};
-use crate::models::_entities::{comments, posts, remote_actors, remote_comments, remote_posts};
+use crate::models::_entities::{
+    comments, posts, received_activities, remote_actors, remote_comments, remote_posts,
+};
 
 /// How long a fetched remote actor is considered fresh.
 pub const ACTOR_TTL_DAYS: i64 = 1;
@@ -509,6 +511,18 @@ pub async fn record_received_activity(
         ))
         .await?;
     Ok(res.rows_affected() == 1)
+}
+
+/// Removes `activity_ap_id` from the received set, so a retry is processed.
+pub async fn forget_received_activity(
+    db: &DatabaseConnection,
+    activity_ap_id: &str,
+) -> Result<(), DbErr> {
+    received_activities::Entity::delete_many()
+        .filter(received_activities::Column::ApId.eq(activity_ap_id))
+        .exec(db)
+        .await?;
+    Ok(())
 }
 
 /// Deletes expired rows from the remote cache. Never touches local tables.

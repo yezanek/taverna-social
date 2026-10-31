@@ -2,7 +2,7 @@ use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::{Extension, Form};
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use loco_rs::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -10,14 +10,15 @@ use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
 use crate::common::markdown::render_markdown;
-use crate::controllers::auth::validate_csrf;
+use crate::controllers::csrf::{self, CsrfForm};
+use crate::federation::outbound;
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::communities::CommunityModel;
 use crate::models::community_bans::Entity as CommunityBansEntity;
 use crate::models::feed::{self, CursorQuery};
-use crate::models::posts::PostModel;
+use crate::models::posts::{PostError, PostModel};
 use crate::models::users::UserModel;
 use crate::views::helpers;
 
@@ -60,13 +61,7 @@ pub async fn list(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
     let response = helpers::render_with_theme(
         &v,
         "communities/list.html",
@@ -148,13 +143,7 @@ pub async fn feed(
         .map(render_markdown)
         .unwrap_or_default();
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
     let response = helpers::render_with_theme(
         &v,
         "communities/feed.html",
@@ -195,13 +184,7 @@ pub async fn new_community_form(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -227,9 +210,7 @@ pub async fn create_community(
     headers: HeaderMap,
     Form(form): Form<CreateCommunityForm>,
 ) -> Result<Response> {
-    use crate::controllers::auth::validate_csrf;
-
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -281,13 +262,7 @@ pub async fn new_post_form(
         return Err(Error::Unauthorized("You must join to post".to_string()));
     }
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
     let response = helpers::render_with_theme(
         &v,
         "communities/new_post.html",
@@ -325,7 +300,18 @@ pub async fn create_post(
         return Err(Error::Unauthorized("You must join to post".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    // `posting_restricted` communities only accept posts from moderators.
+    if community.posting_restricted
+        && !CommunityModel::can_moderate(&ctx.db, community.id, &current_user)
+            .await
+            .map_err(|_| Error::InternalServerError)?
+    {
+        return Err(Error::Unauthorized(
+            "Only moderators can post in this community".to_string(),
+        ));
+    }
+
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -340,77 +326,29 @@ pub async fn create_post(
     )
     .await
     .map_err(|e| match e {
-        crate::models::posts::PostError::Banned => {
-            Error::Unauthorized("You are banned from this community".to_string())
-        }
+        PostError::Banned => Error::Unauthorized("You are banned from this community".to_string()),
+        PostError::Validation(msg) => Error::BadRequest(msg),
         _ => Error::InternalServerError,
     })?;
 
-    // Federation: enqueue Create activity to community followers
     if taverna.federation.enabled {
-        let author = crate::models::users::UserModel::find_by_id(&ctx.db, current_user.id)
-            .await
-            .map_err(|_| Error::InternalServerError)?
-            .ok_or_else(|| Error::InternalServerError)?;
-
-        let ap_context: &[&str] = &[
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1",
-        ];
-
-        let note_value = serde_json::json!({
-            "@context": ap_context,
-            "id": post.ap_id,
-            "type": "Note",
-            "attributedTo": community.ap_id,
-            "content": post.body,
-            "name": post.title,
-            "published": post.published_at.to_rfc3339(),
-            "url": post.url,
-            "to": [community.followers_url],
-            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
-        });
-
-        let activity_id = format!("{}/activities/{}", author.ap_id, uuid::Uuid::new_v4());
-        let create = serde_json::json!({
-            "@context": ap_context,
-            "id": activity_id,
-            "type": "Create",
-            "actor": author.ap_id,
-            "object": note_value,
-            "to": [community.followers_url],
-            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
-            "published": chrono::Utc::now().to_rfc3339(),
-        });
-
-        let inboxes = crate::workers::deliver_activity::get_follower_inboxes_deduplicated(
-            &ctx.db,
-            community.id,
-        )
-        .await
-        .unwrap_or_default();
-        if !inboxes.is_empty()
-            && let Err(e) = crate::workers::deliver_activity::enqueue_activity(
-                &ctx.db,
-                &create,
-                &author.ap_id,
-                inboxes,
-            )
-            .await
-        {
-            tracing::error!(
-                "failed to enqueue to followers for activity {}: {:?}",
-                create["id"],
-                e
-            );
-        }
+        let note = outbound::post_note(
+            &post,
+            &current_user.ap_id,
+            Some(&community),
+            &current_user.followers_url,
+        );
+        let create = outbound::wrap("Create", &current_user.ap_id, note);
+        outbound::send_to_community_followers(&ctx.db, &create, &current_user.ap_id, community.id)
+            .await;
     }
 
-    Ok(format::redirect(&format!("/c/{}", slug)).into_response())
+    Ok(format::redirect(&format!("/c/{slug}")).into_response())
 }
 
-/// Joins the current user to a community as a member.
-#[instrument(skip(ctx, jar, headers, taverna))]
+/// Joins the current user to a community as a member. For a remote
+/// community this also sends a Follow to its inbox.
+#[instrument(skip(ctx, jar, headers, taverna, form))]
 pub async fn join(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
@@ -418,13 +356,14 @@ pub async fn join(
     Extension(taverna): Extension<TavernaConfig>,
     headers: HeaderMap,
     Path(slug): Path<String>,
+    Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
-    if !validate_csrf(&jar, None, &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -432,37 +371,22 @@ pub async fn join(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    // Federation: if remote community, send Follow activity
     if taverna.federation.enabled && !community.is_local {
-        let ap_context: &[&str] = &[
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1",
-        ];
-        let activity_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
-        let follow_activity = serde_json::json!({
-            "@context": ap_context,
-            "id": activity_id,
-            "type": "Follow",
-            "actor": current_user.ap_id,
-            "object": community.ap_id,
-        });
-        let inboxes = vec![community.inbox_url.clone()];
-        if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_activity(
-                &ctx.db,
-                &follow_activity,
-                &current_user.ap_id,
-                inboxes,
-            )
-            .await;
-        }
+        let follow = outbound::follow(&current_user.ap_id, &community.ap_id, community.id);
+        outbound::send(
+            &ctx.db,
+            &follow,
+            &current_user.ap_id,
+            vec![community.inbox_url.clone()],
+        )
+        .await;
     }
-
-    Ok(format::redirect(&format!("/c/{}", slug)).into_response())
+    Ok(format::redirect(&format!("/c/{slug}")).into_response())
 }
 
-/// Removes the current user from a community's member list.
-#[instrument(skip(ctx, jar, headers, taverna))]
+/// Removes the current user from a community's member list. For a remote
+/// community this also sends Undo{Follow}.
+#[instrument(skip(ctx, jar, headers, taverna, form))]
 pub async fn leave(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
@@ -470,53 +394,30 @@ pub async fn leave(
     Extension(taverna): Extension<TavernaConfig>,
     headers: HeaderMap,
     Path(slug): Path<String>,
+    Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
-
-    if !validate_csrf(&jar, None, &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
-
     CommunityModel::remove_member(&ctx.db, community.id, current_user.id)
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    // Federation: if remote community, send Undo{Follow} activity
     if taverna.federation.enabled && !community.is_local {
-        let ap_context: &[&str] = &[
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1",
-        ];
-        let undo_id = format!("{}/activities/{}", current_user.ap_id, uuid::Uuid::new_v4());
-        let follow_id = format!("{}/follows/{}", current_user.ap_id, community.id);
-        let undo_activity = serde_json::json!({
-            "@context": ap_context,
-            "id": undo_id,
-            "type": "Undo",
-            "actor": current_user.ap_id,
-            "object": {
-                "id": follow_id,
-                "type": "Follow",
-                "actor": current_user.ap_id,
-                "object": community.ap_id,
-            },
-        });
-        let inboxes = vec![community.inbox_url.clone()];
-        if !inboxes.is_empty() {
-            let _ = crate::workers::deliver_activity::enqueue_activity(
-                &ctx.db,
-                &undo_activity,
-                &current_user.ap_id,
-                inboxes,
-            )
-            .await;
-        }
+        let undo = outbound::undo_follow(&current_user.ap_id, &community.ap_id, community.id);
+        outbound::send(
+            &ctx.db,
+            &undo,
+            &current_user.ap_id,
+            vec![community.inbox_url.clone()],
+        )
+        .await;
     }
-
-    Ok(format::redirect(&format!("/c/{}", slug)).into_response())
+    Ok(format::redirect(&format!("/c/{slug}")).into_response())
 }
 
 /// Renders community settings form (moderator only).
@@ -542,13 +443,7 @@ pub async fn settings_form(
         return Err(Error::Unauthorized("Moderator access required".to_string()));
     }
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
     let response = helpers::render_with_theme(
         &v,
         "communities/settings.html",
@@ -586,7 +481,7 @@ pub async fn update_settings(
         return Err(Error::Unauthorized("Moderator access required".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -595,8 +490,9 @@ pub async fn update_settings(
         community.id,
         form.name.as_deref(),
         form.description.as_deref(),
-        form.is_nsfw.map(|v| v == "on"),
-        form.posting_restricted.map(|v| v == "on"),
+        // Unchecked checkboxes are absent from the form, so absence means off.
+        Some(form.is_nsfw.is_some()),
+        Some(form.posting_restricted.is_some()),
     )
     .await
     .map_err(|_| Error::InternalServerError)?;
@@ -605,7 +501,7 @@ pub async fn update_settings(
 }
 
 /// Bans a user from the community (moderator only).
-#[instrument(skip(ctx, jar, headers, taverna))]
+#[instrument(skip(ctx, jar, headers, taverna, form))]
 pub async fn ban_user(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
@@ -613,6 +509,7 @@ pub async fn ban_user(
     Extension(taverna): Extension<TavernaConfig>,
     headers: HeaderMap,
     Path((slug, username)): Path<(String, String)>,
+    Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
@@ -627,7 +524,7 @@ pub async fn ban_user(
         return Err(Error::Unauthorized("Moderator access required".to_string()));
     }
 
-    if !validate_csrf(&jar, None, &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -644,7 +541,7 @@ pub async fn ban_user(
 }
 
 /// Unbans a user from the community (moderator only).
-#[instrument(skip(ctx, jar, headers, taverna))]
+#[instrument(skip(ctx, jar, headers, taverna, form))]
 pub async fn unban_user(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
@@ -652,6 +549,7 @@ pub async fn unban_user(
     Extension(taverna): Extension<TavernaConfig>,
     headers: HeaderMap,
     Path((slug, username)): Path<(String, String)>,
+    Form(form): Form<CsrfForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await
@@ -666,7 +564,7 @@ pub async fn unban_user(
         return Err(Error::Unauthorized("Moderator access required".to_string()));
     }
 
-    if !validate_csrf(&jar, None, &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 

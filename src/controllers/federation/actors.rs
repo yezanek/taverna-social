@@ -1,59 +1,10 @@
-use axum::{Extension, extract::Path, response::IntoResponse};
+use axum::{extract::Path, response::IntoResponse};
 use loco_rs::prelude::*;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde_json::json;
 use tracing::instrument;
 
-use crate::initializers::content_negotiation::RenderMode;
 use crate::models::_entities::{communities, follows, posts, users};
-
-/// Returns a user's ActivityPub actor object (Person type).
-#[instrument(skip(ctx))]
-pub async fn user_actor(
-    State(ctx): State<AppContext>,
-    Extension(render_mode): Extension<RenderMode>,
-    Path(username): Path<String>,
-) -> Result<Response> {
-    let user = users::Entity::find()
-        .filter(users::Column::Username.eq(username.to_lowercase()))
-        .one(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?
-        .ok_or_else(|| Error::NotFound)?;
-
-    match render_mode {
-        RenderMode::ActivityPub => {
-            let actor = json!({
-                "@context": [
-                    "https://www.w3.org/ns/activitystreams",
-                    "https://w3id.org/security/v1"
-                ],
-                "id": user.ap_id,
-                "type": "Person",
-                "url": user.ap_id,
-                "preferredUsername": user.username,
-                "name": user.display_name,
-                "summary": user.bio,
-                "icon": user.avatar_url,
-                "inbox": format!("{}/inbox", user.ap_id),
-                "outbox": format!("{}/outbox", user.ap_id),
-                "followers": format!("{}/followers", user.ap_id),
-                "following": format!("{}/following", user.ap_id),
-                "publicKey": {
-                    "id": format!("{}#main-key", user.ap_id),
-                    "owner": user.ap_id,
-                    "publicKeyPem": user.public_key,
-                },
-                "manuallyApprovesFollowers": false,
-                "published": user.created_at.format("%+").to_string(),
-            });
-            Ok(axum::Json(actor).into_response())
-        }
-        RenderMode::Html => {
-            Ok(axum::response::Redirect::to(&format!("/u/{}/posts", username)).into_response())
-        }
-    }
-}
 
 /// Returns a user's followers collection (OrderedCollection).
 #[instrument(skip(ctx))]

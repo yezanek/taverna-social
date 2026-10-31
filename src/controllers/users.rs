@@ -1,16 +1,16 @@
 use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use loco_rs::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::instrument;
-use uuid::Uuid;
 
 use crate::common::config::TavernaConfig;
 use crate::common::markdown::render_markdown;
-use crate::controllers::auth::validate_csrf;
+use crate::controllers::csrf;
+use crate::federation::outbound;
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
 use crate::initializers::theme_middleware::CurrentTheme;
@@ -18,7 +18,7 @@ use crate::models::comments::CommentModel;
 use crate::models::feed::CursorQuery;
 use crate::models::follows::Entity as FollowEntity;
 use crate::models::posts::PostModel;
-use crate::models::users::UserModel;
+use crate::models::users::{UserError, UserModel};
 use crate::views::helpers;
 
 const PER_PAGE: u64 = 20;
@@ -140,13 +140,7 @@ pub async fn profile(
         .unwrap_or_else(|| user.username.clone());
     let avatar_letter = user.username.chars().next().unwrap_or('?').to_string();
 
-    let csrf_token = Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -218,13 +212,7 @@ pub async fn profile_posts(
         .unwrap_or_else(|| user.username.clone());
     let avatar_letter = user.username.chars().next().unwrap_or('?').to_string();
 
-    let csrf_token = Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -298,13 +286,7 @@ pub async fn profile_comments(
         .unwrap_or_else(|| user.username.clone());
     let avatar_letter = user.username.chars().next().unwrap_or('?').to_string();
 
-    let csrf_token = Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -352,7 +334,7 @@ pub async fn follow(
         return Err(Error::Unauthorized("Cannot follow yourself".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -360,38 +342,9 @@ pub async fn follow(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    // Federation: enqueue AP Follow activity if remote
-    if taverna.federation.enabled && !target.is_local {
-        let ap_context: &[&str] = &[
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1",
-        ];
-        let activity_id = format!("{}/activities/{}", current_user.ap_id, Uuid::new_v4());
-        let follow_activity = serde_json::json!({
-            "@context": ap_context,
-            "id": activity_id,
-            "type": "Follow",
-            "actor": current_user.ap_id,
-            "object": target.ap_id,
-        });
-        let inboxes = vec![target.inbox_url.clone()];
-        crate::workers::deliver_activity::enqueue_activity(
-            &ctx.db,
-            &follow_activity,
-            &current_user.ap_id,
-            inboxes,
-        )
-        .await
-        .map_err(|e| Error::string(&e.to_string()))?;
-    }
-
-    let csrf_token = Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    // `users` holds local accounts only (ADR-017), so a user-to-user follow
+    // never needs federating; remote follows arrive through the inbox.
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let is_hx = headers
         .get("hx-request")
@@ -437,7 +390,7 @@ pub async fn unfollow(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -445,44 +398,9 @@ pub async fn unfollow(
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    // Federation: enqueue AP Undo{Follow} activity if remote
-    if taverna.federation.enabled && !target.is_local {
-        let ap_context: &[&str] = &[
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1",
-        ];
-        let undo_id = format!("{}/activities/{}", current_user.ap_id, Uuid::new_v4());
-        let follow_id = format!("{}/follows/{}", current_user.ap_id, target.id);
-        let undo_activity = serde_json::json!({
-            "@context": ap_context,
-            "id": undo_id,
-            "type": "Undo",
-            "actor": current_user.ap_id,
-            "object": {
-                "id": follow_id,
-                "type": "Follow",
-                "actor": current_user.ap_id,
-                "object": target.ap_id,
-            },
-        });
-        let inboxes = vec![target.inbox_url.clone()];
-        crate::workers::deliver_activity::enqueue_activity(
-            &ctx.db,
-            &undo_activity,
-            &current_user.ap_id,
-            inboxes,
-        )
-        .await
-        .map_err(|e| Error::string(&e.to_string()))?;
-    }
-
-    let csrf_token = Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    // `users` holds local accounts only (ADR-017), so a user-to-user follow
+    // never needs federating; remote follows arrive through the inbox.
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let is_hx = headers
         .get("hx-request")
@@ -524,13 +442,7 @@ pub async fn settings_form(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
-    let csrf_token = Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let user_email = user.email.clone();
     let eligibility = crate::models::eligibility::check_eligibility(&ctx.db, current_user.id)
@@ -561,7 +473,7 @@ pub async fn update_settings(
     headers: HeaderMap,
     Form(form): Form<SettingsForm>,
 ) -> Result<Response> {
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -573,20 +485,26 @@ pub async fn update_settings(
         form.avatar_url.as_deref(),
     )
     .await
-    .map_err(|_| Error::InternalServerError)?;
+    .map_err(|e| match e {
+        UserError::Validation(msg) => Error::BadRequest(msg),
+        _ => Error::InternalServerError,
+    })?;
 
-    if let Some(ref email) = form.email {
-        let trimmed = email.trim();
-        if !trimmed.is_empty() {
-            UserModel::update_email(&ctx.db, current_user.id, trimmed)
-                .await
-                .map_err(|e| match e {
-                    crate::models::users::UserError::EmailTaken => {
-                        Error::BadRequest("Email already taken".to_string())
-                    }
-                    crate::models::users::UserError::Validation(msg) => Error::BadRequest(msg),
-                    _ => Error::InternalServerError,
-                })?;
+    if let Some(email) = form
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+    {
+        let changed = UserModel::update_email(&ctx.db, current_user.id, email)
+            .await
+            .map_err(|e| match e {
+                UserError::EmailTaken => Error::BadRequest("Email already taken".to_string()),
+                UserError::Validation(msg) => Error::BadRequest(msg),
+                _ => Error::InternalServerError,
+            })?;
+        if changed {
+            send_new_verification(&ctx, &current_user, email, &taverna.base_url).await;
         }
     }
 
@@ -596,47 +514,20 @@ pub async fn update_settings(
         .map_err(|_| Error::InternalServerError)?
         .ok_or_else(|| Error::NotFound)?;
 
-    // Federation: enqueue Update{Person} activity
     if taverna.federation.enabled {
-        let ap_context: &[&str] = &[
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1",
-        ];
-        let activity_id = format!("{}/activities/{}", current_user.ap_id, Uuid::new_v4());
         let person = serde_json::json!({
-            "@context": ap_context,
             "id": persisted_user.ap_id,
             "type": "Person",
             "preferredUsername": persisted_user.username,
             "name": persisted_user.display_name,
             "summary": persisted_user.bio,
             "icon": persisted_user.avatar_url,
+            "to": [outbound::AP_PUBLIC],
+            "cc": [persisted_user.followers_url],
         });
-        let update = serde_json::json!({
-            "@context": ap_context,
-            "id": activity_id,
-            "type": "Update",
-            "actor": current_user.ap_id,
-            "object": person,
-            "to": [current_user.followers_url],
-            "published": chrono::Utc::now().to_rfc3339(),
-        });
-        let inboxes = crate::workers::deliver_activity::get_user_follower_inboxes_deduplicated(
-            &ctx.db,
-            current_user.id,
-        )
-        .await
-        .map_err(|e| Error::string(&e.to_string()))?;
-        if !inboxes.is_empty() {
-            crate::workers::deliver_activity::enqueue_activity(
-                &ctx.db,
-                &update,
-                &current_user.ap_id,
-                inboxes,
-            )
-            .await
-            .map_err(|e| Error::string(&e.to_string()))?;
-        }
+        let update = outbound::wrap("Update", &current_user.ap_id, person);
+        outbound::send_to_user_followers(&ctx.db, &update, current_user.id, &current_user.ap_id)
+            .await;
     }
 
     Ok(format::redirect("/settings").into_response())
@@ -652,14 +543,12 @@ pub async fn change_password(
     headers: HeaderMap,
     Form(form): Form<PasswordForm>,
 ) -> Result<Response> {
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
     if form.new_password != form.new_password_confirm {
-        return Err(Error::Unauthorized(
-            "New passwords do not match".to_string(),
-        ));
+        return Err(Error::BadRequest("New passwords do not match".to_string()));
     }
 
     UserModel::change_password(
@@ -670,7 +559,7 @@ pub async fn change_password(
     )
     .await
     .map_err(|e| match e {
-        crate::models::users::UserError::Validation(msg) => Error::Unauthorized(msg),
+        UserError::Validation(msg) => Error::BadRequest(msg),
         _ => Error::InternalServerError,
     })?;
 
@@ -696,13 +585,7 @@ pub async fn profile_new_post(
         return Err(Error::Unauthorized("Not authorized".to_string()));
     }
 
-    let csrf_token = Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -732,7 +615,7 @@ pub async fn create_profile_post(
         return Err(Error::Unauthorized("Not authorized".to_string()));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
     }
 
@@ -748,55 +631,45 @@ pub async fn create_profile_post(
     .await
     .map_err(|_| Error::InternalServerError)?;
 
-    // Federation: enqueue Create activity to user followers
     if taverna.federation.enabled {
-        let ap_context: &[&str] = &[
-            "https://www.w3.org/ns/activitystreams",
-            "https://w3id.org/security/v1",
-        ];
-
-        let note = serde_json::json!({
-            "@context": ap_context,
-            "id": post.ap_id,
-            "type": "Note",
-            "attributedTo": current_user.ap_id,
-            "content": post.body,
-            "name": post.title,
-            "published": post.published_at.to_rfc3339(),
-            "url": post.url,
-            "to": [current_user.followers_url],
-            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
-        });
-
-        let activity_id = format!("{}/activities/{}", current_user.ap_id, Uuid::new_v4());
-        let create = serde_json::json!({
-            "@context": ap_context,
-            "id": activity_id,
-            "type": "Create",
-            "actor": current_user.ap_id,
-            "object": note,
-            "to": [current_user.followers_url],
-            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
-            "published": chrono::Utc::now().to_rfc3339(),
-        });
-
-        let inboxes = crate::workers::deliver_activity::get_user_follower_inboxes_deduplicated(
-            &ctx.db,
-            current_user.id,
-        )
-        .await
-        .map_err(|e| Error::string(&e.to_string()))?;
-        if !inboxes.is_empty() {
-            crate::workers::deliver_activity::enqueue_activity(
-                &ctx.db,
-                &create,
-                &current_user.ap_id,
-                inboxes,
-            )
-            .await
-            .map_err(|e| Error::string(&e.to_string()))?;
-        }
+        let note = outbound::post_note(
+            &post,
+            &current_user.ap_id,
+            None,
+            &current_user.followers_url,
+        );
+        let create = outbound::wrap("Create", &current_user.ap_id, note);
+        outbound::send_to_user_followers(&ctx.db, &create, current_user.id, &current_user.ap_id)
+            .await;
     }
 
     Ok(format::redirect(&format!("/u/{}", username)).into_response())
+}
+
+/// Issues and mails a verification link after an email change. Failures are
+/// logged: the user can resend from the settings page.
+async fn send_new_verification(
+    ctx: &AppContext,
+    user: &crate::models::_entities::users::Model,
+    email: &str,
+    base_url: &str,
+) {
+    let token = match crate::models::email_verifications::issue(&ctx.db, user.id).await {
+        Ok(token) => token,
+        Err(e) => {
+            tracing::warn!(user_id = %user.id, error = %e, "failed to store verification token");
+            return;
+        }
+    };
+    if let Err(e) = crate::mailers::verification::send_verification_email(
+        ctx,
+        email,
+        &user.username,
+        &token,
+        base_url,
+    )
+    .await
+    {
+        tracing::warn!(user_id = %user.id, error = %e, "failed to send verification email");
+    }
 }
