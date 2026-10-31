@@ -85,11 +85,12 @@ jobs:
 
       - name: Install pgmq
         run: |
-          # PostgreSQL 16 headers are not in the runner's default apt sources.
+          # PostgreSQL 16 (server for pgrx initdb, plus headers) is not in the
+          # runner's default apt sources.
           sudo apt-get update
           sudo apt-get install -y postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y postgresql-server-dev-16 libclang-dev
+          sudo apt-get install -y postgresql-16 postgresql-server-dev-16 libclang-dev
           PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config
           cargo install --locked cargo-pgrx --version 0.18.0
           cargo pgrx init --pg16 "$PG_CONFIG"
