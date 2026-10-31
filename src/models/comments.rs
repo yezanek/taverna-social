@@ -1,6 +1,6 @@
 use crate::models::_entities::{comments, communities, posts};
 use crate::models::feed::{Cursor, Page};
-use sea_orm::sea_query::{Expr, Value};
+use sea_orm::sea_query::{Expr, ExprTrait, Value};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
     QueryFilter, QueryOrder, QueryResult, QuerySelect, Set, Statement, TransactionTrait,
@@ -127,23 +127,23 @@ impl CommentModel {
             r#"INSERT INTO comments (id, ap_id, post_id, author_id, parent_id, path, body, score, is_deleted, is_removed, published_at, created_at, updated_at)
                VALUES ($1, $2, $3, $4, $5, CAST($6 AS ltree), $7, $8, $9, $10, $11, $12, $13)"#,
             vec![
-                Value::Uuid(Some(Box::new(id))),
-                Value::String(Some(Box::new(ap_id))),
-                Value::Uuid(Some(Box::new(post_id))),
-                Value::Uuid(Some(Box::new(author_id))),
-                Value::Uuid(parent_id.map(Box::new)),
-                Value::String(Some(Box::new(path))),
-                Value::String(Some(Box::new(body.to_string()))),
+                Value::from(id),
+                Value::from(ap_id),
+                Value::from(post_id),
+                Value::from(author_id),
+                Value::from(parent_id),
+                Value::from(path),
+                Value::from(body.to_string()),
                 Value::Int(Some(0)),
                 Value::Bool(Some(false)),
                 Value::Bool(Some(false)),
-                Value::ChronoDateTimeUtc(Some(Box::new(now))),
-                Value::ChronoDateTimeUtc(Some(Box::new(now))),
-                Value::ChronoDateTimeUtc(Some(Box::new(now))),
+                Value::from(now),
+                Value::from(now),
+                Value::from(now),
             ],
         );
 
-        txn.execute(stmt).await?;
+        txn.execute_raw(stmt).await?;
 
         // Increment in SQL so concurrent comments cannot lose an update.
         posts::Entity::update_many()
@@ -177,10 +177,10 @@ impl CommentModel {
                 COMMENT_SELECT
             )
             .as_str(),
-            vec![Value::Uuid(Some(Box::new(post_id)))],
+            vec![Value::from(post_id)],
         );
 
-        let rows = db.query_all(stmt).await?;
+        let rows = db.query_all_raw(stmt).await?;
         rows_to_comments(rows)
     }
 
@@ -200,10 +200,10 @@ impl CommentModel {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!("{} WHERE id = $1", COMMENT_SELECT).as_str(),
-            vec![Value::Uuid(Some(Box::new(id)))],
+            vec![Value::from(id)],
         );
 
-        let rows = db.query_all(stmt).await?;
+        let rows = db.query_all_raw(stmt).await?;
         opt_row_to_comment(rows)
     }
 

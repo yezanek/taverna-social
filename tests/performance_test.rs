@@ -24,7 +24,7 @@ mod tests {
     }
 
     async fn exec(db: &sea_orm::DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             sql,
             values,

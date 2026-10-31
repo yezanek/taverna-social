@@ -29,7 +29,7 @@ mailer:
     secure: false
 
 database:
-  uri: {{ get_env(name="DATABASE_URL", default="postgres://localhost:5432/taverna_development") }}
+  uri: <%= get_env(name="DATABASE_URL", default="postgres://localhost:5432/taverna_development") %>
   enable_logging: true
   connect_timeout: 5000
   idle_timeout: 600000
@@ -41,7 +41,7 @@ database:
 
 auth:
   jwt:
-    secret: {{ get_env(name="JWT_SECRET", default="dev-secret-change-in-production") }}
+    secret: <%= get_env(name="JWT_SECRET", default="dev-secret-change-in-production") %>
     expiration: 3600
     location:
       from: Cookie

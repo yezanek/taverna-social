@@ -49,7 +49,7 @@ pub async fn nodeinfo_v2(State(ctx): State<AppContext>) -> Result<Response> {
         "version": "2.0",
         "software": {
             "name": "taverna",
-            "version": "0.1.0"
+            "version": env!("CARGO_PKG_VERSION")
         },
         "protocols": ["activitypub"],
         "usage": {

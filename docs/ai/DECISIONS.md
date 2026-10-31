@@ -257,7 +257,7 @@ CI no longer builds pgmq for the test job, since no code or migration uses it.
 
 ## ADR-016 note (Phase 8)
 
-Loco 0.16 reads `config/<env>.yaml`; the repository's config files are YAML
+Loco (0.16 and 1.x) reads `config/<env>.yaml`; the repository's config files are YAML
 (`development.yaml`, `test.yaml`, and the `production.example.yaml` template).
 ADR-016 describes an intent that the framework does not support.
 

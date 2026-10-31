@@ -301,7 +301,7 @@ mod tests {
         let body: serde_json::Value = response.json();
         assert_eq!(body["version"], "2.0");
         assert_eq!(body["software"]["name"], "taverna");
-        assert_eq!(body["software"]["version"], "0.1.0");
+        assert_eq!(body["software"]["version"], env!("CARGO_PKG_VERSION"));
         assert!(
             body["protocols"]
                 .as_array()

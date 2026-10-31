@@ -3,7 +3,7 @@ use crate::models::feed::{Cursor, Page};
 use activitypub_federation::http_signatures::generate_actor_keypair;
 use argon2::{
     Argon2,
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+    password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
@@ -35,9 +35,9 @@ pub const MIN_PASSWORD_LEN: usize = 8;
 async fn hash_password(password: &str) -> Result<String, UserError> {
     let password = password.to_owned();
     tokio::task::spawn_blocking(move || {
-        let salt = SaltString::generate(&mut OsRng);
+        // A fresh random salt comes from the OS RNG (`getrandom`).
         Argon2::default()
-            .hash_password(password.as_bytes(), &salt)
+            .hash_password(password.as_bytes())
             .map(|h| h.to_string())
             .map_err(|e| UserError::Other(anyhow::anyhow!("Password hashing failed: {e}")))
     })
@@ -346,10 +346,10 @@ impl UserModel {
             r#"UPDATE users SET standing_score = GREATEST(-100, standing_score + $1) WHERE id = $2"#,
             vec![
                 sea_orm::Value::Int(Some(delta)),
-                sea_orm::Value::Uuid(Some(Box::new(user_id))),
+                sea_orm::Value::from(user_id),
             ],
         );
-        db.execute(stmt).await?;
+        db.execute_raw(stmt).await?;
         Ok(())
     }
 

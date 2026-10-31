@@ -282,7 +282,7 @@ const DISPATCH_LEASE_SECONDS: i64 = 300;
 pub async fn dispatch_due(ctx: &AppContext, batch_size: u64) -> Result<usize> {
     let db = &ctx.db;
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             r#"
             UPDATE outbound_activities
