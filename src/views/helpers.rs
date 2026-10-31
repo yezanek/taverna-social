@@ -4,13 +4,11 @@ use serde_json::{Value, json};
 
 use crate::initializers::theme_middleware::CurrentTheme;
 
-#[allow(clippy::result_large_err)]
 pub fn render(v: &TeraView, template: &str, data: Value) -> Result<Response> {
     let html = v.render(template, data)?;
     format::html(&html)
 }
 
-#[allow(clippy::result_large_err)]
 pub fn render_with_theme(
     v: &TeraView,
     template: &str,

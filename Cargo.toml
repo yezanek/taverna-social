@@ -72,3 +72,8 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.sha2]
 opt-level = 3
+
+[lints.clippy]
+# loco_rs::Error is a large framework enum that every handler, model and
+# worker returns; it cannot be boxed from our side.
+result_large_err = "allow"

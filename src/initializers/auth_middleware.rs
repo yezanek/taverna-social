@@ -103,7 +103,6 @@ where
     }
 }
 
-#[allow(clippy::result_large_err)]
 fn extract_token_from_cookie(parts: &Parts, name: &str) -> Result<String, Error> {
     for header_value in parts.headers.get_all("cookie") {
         let Ok(cookies) = header_value.to_str() else {

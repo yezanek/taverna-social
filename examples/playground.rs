@@ -3,7 +3,6 @@ use loco_rs::{cli::playground, prelude::*};
 use taverna::app::App;
 
 #[tokio::main]
-#[allow(clippy::result_large_err)] // loco_rs::Error is large; this is a dev playground
 async fn main() -> loco_rs::Result<()> {
     let _ctx = playground::<App>().await?;
 
