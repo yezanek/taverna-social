@@ -4,15 +4,21 @@ use loco_rs::boot::BootResult;
 use loco_rs::testing::request::boot_test;
 use taverna::app::App;
 
-static BOOT: tokio::sync::OnceCell<BootResult> = tokio::sync::OnceCell::const_new();
-
+/// Boots a fresh app for the current test.
+///
+/// Every `#[tokio::test]` runs on its own runtime, and a database pool created
+/// on one runtime cannot be used from another (connections die with the
+/// runtime that opened them, which showed up as `ConnectionAcquire(Timeout)`).
+/// So each test boots its own app. The test config sets
+/// `dangerously_recreate`, so this also gives every test a clean database.
+/// Tests touching the database are `#[serial]`, so recreating is safe.
+///
+/// The boot result is leaked so existing callers can keep a `&'static`
+/// reference; test processes are short-lived.
 pub async fn shared_boot() -> &'static BootResult {
-    BOOT.get_or_init(|| async {
-        dotenvy::dotenv().ok();
-        unsafe { std::env::set_var("RATE_LIMITING_ENABLED", "false") };
-        boot_test::<App>().await.unwrap()
-    })
-    .await
+    dotenvy::dotenv().ok();
+    unsafe { std::env::set_var("RATE_LIMITING_ENABLED", "false") };
+    Box::leak(Box::new(boot_test::<App>().await.unwrap()))
 }
 
 #[allow(dead_code)]
