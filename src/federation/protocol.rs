@@ -126,6 +126,51 @@ pub struct Group {
     pub sensitive: Option<bool>,
 }
 
+/// Actor types accepted from remote instances.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum RemoteActorKind {
+    Person,
+    Group,
+    Service,
+    Application,
+}
+
+impl RemoteActorKind {
+    /// Value stored in `remote_actors.actor_type` (Application maps to Service).
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            RemoteActorKind::Person => "Person",
+            RemoteActorKind::Group => "Group",
+            RemoteActorKind::Service | RemoteActorKind::Application => "Service",
+        }
+    }
+}
+
+/// Endpoints block of an actor (only `sharedInbox` is used).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActorEndpoints {
+    #[serde(rename = "sharedInbox")]
+    pub shared_inbox: Option<Url>,
+}
+
+/// Any remote actor (Person, Group, Service) as fetched from another instance.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteActorJson {
+    #[serde(rename = "type")]
+    pub kind: RemoteActorKind,
+    pub id: Url,
+    #[serde(rename = "preferredUsername")]
+    pub preferred_username: Option<String>,
+    pub name: Option<String>,
+    pub summary: Option<String>,
+    pub icon: Option<serde_json::Value>,
+    pub inbox: Url,
+    pub followers: Option<Url>,
+    pub endpoints: Option<ActorEndpoints>,
+    #[serde(rename = "publicKey")]
+    pub public_key: Option<serde_json::Value>,
+}
+
 // ── Object (Note) type ──────────────────────────────────────
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

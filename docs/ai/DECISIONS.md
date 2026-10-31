@@ -218,3 +218,44 @@ user-facing response time.
 
 **No exceptions. Even for single-recipient activities (e.g. Accept{Follow}),
 enqueue rather than send inline.**
+
+---
+
+## ADR-020: Remote actors in follows and votes; typed idempotency table
+
+**Decision:** Phase 8 moves remote people out of `users` (ADR-017), so
+`follows` gains `remote_follower_ap_id` / `remote_following_ap_id` and `votes`
+gains `remote_actor_ap_id`, all referencing `remote_actors(ap_id)`.
+`follower_id` and `votes.user_id` become nullable, with CHECK constraints that
+exactly one side is set. Inbox idempotency (ADR-009) moves from the dropped
+`federation_objects` table to `received_activities(ap_id, received_at)`, which
+the daily expiry job trims after 30 days.
+
+**Reason:** Without these columns, a remote Follow or Like has nowhere to
+live once remote actors are not users. The expiry job never deletes a remote
+actor that a follow or vote still references.
+
+**Do not point follows or votes at placeholder rows in `users`.**
+
+---
+
+## ADR-021: Outbound delivery is dispatched by an in-process poller
+
+**Decision:** Handlers call `enqueue_activity` (ADR-019). A background loop
+started by `FederationJobsInitializer` claims due `outbound_activities` rows
+every 5 seconds (`FOR UPDATE SKIP LOCKED` plus a 5-minute lease) and hands
+each one to `DeliverActivityWorker`. The same initializer runs the remote
+cache expiry once a day. Neither loop runs in the test environment.
+
+**Reason:** Before Phase 8 nothing ever picked up rows from
+`outbound_activities`, so no activity was actually delivered. pgmq is
+installed but not used by the code, and Loco's scheduler needs a separate
+process; an in-process loop keeps deployment to one binary plus PostgreSQL.
+
+---
+
+## ADR-016 note (Phase 8)
+
+Loco 0.16 reads `config/<env>.yaml`; the repository's config files are YAML
+(`development.yaml`, `test.yaml`, and the `production.example.yaml` template).
+ADR-016 describes an intent that the framework does not support.

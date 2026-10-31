@@ -47,7 +47,7 @@ mod tests {
 
         assert!(follow.is_some());
         let follow = follow.unwrap();
-        assert_eq!(follow.follower_id, follower.id);
+        assert_eq!(follow.follower_id, Some(follower.id));
         assert_eq!(follow.following_id, Some(following.id));
     }
 

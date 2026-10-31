@@ -1,0 +1,60 @@
+# Production configuration template (Phase 8, PHASE_8.md Part B3/B6).
+# Copy to config/production.yaml (git-ignored) and adjust. Secrets come from
+# environment variables.
+
+logger:
+  enable: true
+  pretty_backtrace: false
+  level: info
+  format: json
+
+server:
+  port: 3000
+  binding: 0.0.0.0
+  host: {{ get_env(name="BASE_URL", default="https://taverna.example.com") }}
+  middlewares:
+    # gzip/brotli for HTML and JSON responses. If Caddy already does
+    # `encode gzip zstd` (see DEPLOY.md) this can be turned off.
+    compression:
+      enable: true
+    static:
+      enable: true
+      must_exist: true
+      precompressed: false
+      folder:
+        uri: "/static"
+        path: "assets/static"
+      fallback: "assets/static/404.html"
+
+workers:
+  mode: BackgroundAsync
+
+mailer:
+  smtp:
+    enable: true
+    host: {{ get_env(name="SMTP_HOST", default="localhost") }}
+    port: 587
+    secure: true
+
+database:
+  uri: {{ get_env(name="DATABASE_URL") }}
+  enable_logging: false
+  # Sized for several thousand concurrent users (PHASE_8.md B3).
+  # Times are in milliseconds. Loco has no max-lifetime setting; sqlx's
+  # default (30 minutes) matches the 1800s the plan asks for.
+  min_connections: 10
+  max_connections: 100
+  connect_timeout: 5000
+  acquire_timeout: 5000
+  idle_timeout: 600000
+  auto_migrate: false
+  dangerously_truncate: false
+  dangerously_recreate: false
+
+auth:
+  jwt:
+    secret: {{ get_env(name="JWT_SECRET") }}
+    expiration: 3600
+    location:
+      from: Cookie
+      name: access_token

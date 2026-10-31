@@ -29,4 +29,5 @@
 {% else %}
   <p>No posts yet in this community.</p>
 {% endif %}
+{% if next_cursor %}<div class="load-more" style="text-align:center;margin:1rem 0"><a href="?cursor={{ next_cursor }}" class="btn">Load more</a></div>{% endif %}
 {% endblock %}

@@ -1,8 +1,10 @@
 use crate::models::_entities::{posts, posts::ActiveModel, votes};
 use crate::models::community_bans::Entity as CommunityBans;
+use crate::models::feed::{Cursor, Page};
+use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
 };
 use tracing::instrument;
 use url::Url;
@@ -117,58 +119,36 @@ impl PostModel {
             .await
     }
 
-    /// Lists non-deleted posts in a community, ordered by score then recency.
-    #[instrument(skip(db))]
-    pub async fn list_for_community(
-        db: &DatabaseConnection,
-        community_id: Uuid,
-        page: u64,
-        per_page: u64,
-    ) -> Result<(Vec<posts::Model>, u64), sea_orm::DbErr> {
-        let paginator = posts::Entity::find()
-            .filter(posts::Column::CommunityId.eq(community_id))
-            .filter(posts::Column::IsDeleted.eq(false))
-            .order_by_desc(posts::Column::Score)
-            .order_by_desc(posts::Column::PublishedAt)
-            .paginate(db, per_page);
-        let num_pages = paginator.num_pages().await?;
-        let posts = paginator.fetch_page(page).await?;
-        Ok((posts, num_pages))
-    }
-
-    /// Lists non-deleted posts by a specific author, ordered by recency.
+    /// Lists non-deleted posts by a specific author, newest first, keyset-paginated.
     #[instrument(skip(db))]
     pub async fn list_for_author(
         db: &DatabaseConnection,
         author_id: Uuid,
-        page: u64,
-        per_page: u64,
-    ) -> Result<(Vec<posts::Model>, u64), sea_orm::DbErr> {
-        let paginator = posts::Entity::find()
+        cursor: Option<&Cursor>,
+        limit: u64,
+    ) -> Result<Page<posts::Model>, sea_orm::DbErr> {
+        let mut query = posts::Entity::find()
             .filter(posts::Column::AuthorId.eq(author_id))
-            .filter(posts::Column::IsDeleted.eq(false))
+            .filter(posts::Column::IsDeleted.eq(false));
+        if let Some(c) = cursor
+            && let (Some(published_at), Ok(id)) = (c.published_at, Uuid::parse_str(&c.key))
+        {
+            query = query.filter(Expr::cust_with_values(
+                "(published_at, id) < ($1, $2)",
+                [sea_orm::Value::from(published_at), sea_orm::Value::from(id)],
+            ));
+        }
+        let rows = query
             .order_by_desc(posts::Column::PublishedAt)
-            .paginate(db, per_page);
-        let num_pages = paginator.num_pages().await?;
-        let posts = paginator.fetch_page(page).await?;
-        Ok((posts, num_pages))
-    }
-
-    /// Lists all non-deleted posts globally, ordered by score then recency.
-    #[instrument(skip(db))]
-    pub async fn list_all(
-        db: &DatabaseConnection,
-        page: u64,
-        per_page: u64,
-    ) -> Result<(Vec<posts::Model>, u64), sea_orm::DbErr> {
-        let paginator = posts::Entity::find()
-            .filter(posts::Column::IsDeleted.eq(false))
-            .order_by_desc(posts::Column::Score)
-            .order_by_desc(posts::Column::PublishedAt)
-            .paginate(db, per_page);
-        let num_pages = paginator.num_pages().await?;
-        let posts = paginator.fetch_page(page).await?;
-        Ok((posts, num_pages))
+            .order_by_desc(posts::Column::Id)
+            .limit(limit + 1)
+            .all(db)
+            .await?;
+        Ok(Page::from_rows(rows, limit, |p| Cursor {
+            score: None,
+            published_at: Some(p.published_at),
+            key: p.id.to_string(),
+        }))
     }
 
     /// Recalculates the score of a post by summing all vote values.

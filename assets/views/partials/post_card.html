@@ -1,6 +1,6 @@
 <div class="card post-card">
   <div class="post-title">
-    <a href="{% if community %}/c/{{ community.slug }}/posts/{{ post.id }}{% else %}#{% endif %}" style="color:var(--text-primary);text-decoration:none;font-weight:bold;font-size:1.1rem">
+    <a href="{% if post.origin is defined and post.origin == 'remote' %}{{ post.ap_id }}{% elif post.community_slug %}/c/{{ post.community_slug }}/posts/{{ post.id }}{% elif community %}/c/{{ community.slug }}/posts/{{ post.id }}{% else %}#{% endif %}"{% if post.origin is defined and post.origin == 'remote' %} target="_blank" rel="noopener noreferrer"{% endif %} style="color:var(--text-primary);text-decoration:none;font-weight:bold;font-size:1.1rem">
       {{ post.title }}
     </a>
   </div>
@@ -10,6 +10,6 @@
     </div>
   {% endif %}
   <div class="post-details" style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem">
-    {{ post.score }} points | {{ post.comment_count }} comments
+    {{ post.score }} points | {{ post.comment_count }} comments{% if post.author_name %} | by {{ post.author_name }}{% endif %}{% if post.origin is defined and post.origin == 'remote' %} | federated{% endif %}
   </div>
 </div>

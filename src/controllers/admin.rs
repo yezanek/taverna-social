@@ -1,4 +1,4 @@
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
@@ -14,6 +14,7 @@ use crate::initializers::auth_middleware::AuthUser;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::_entities::{community_members, posts};
 use crate::models::communities::CommunityModel;
+use crate::models::feed::Cursor;
 use crate::models::users::UserModel;
 use crate::views::helpers;
 
@@ -24,6 +25,15 @@ pub struct AdminForm {
     pub csrf_token: Option<String>,
 }
 
+const ADMIN_PER_PAGE: u64 = 50;
+
+/// Independent cursors for the two lists on the admin dashboard.
+#[derive(Debug, Default, Deserialize)]
+pub struct AdminListQuery {
+    pub communities_cursor: Option<String>,
+    pub users_cursor: Option<String>,
+}
+
 /// Admin dashboard showing communities and users for moderation.
 #[instrument(skip(v, ctx, theme, current_user, jar))]
 pub async fn dashboard(
@@ -32,17 +42,22 @@ pub async fn dashboard(
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
+    Query(page): Query<AdminListQuery>,
 ) -> Result<Response> {
     if !current_user.is_admin {
         return Err(Error::Unauthorized("Admin access required".to_string()));
     }
 
-    let (all_communities, _) = CommunityModel::list_all(&ctx.db, 0, 50)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let communities_cursor = Cursor::from_param(page.communities_cursor.as_deref());
+    let users_cursor = Cursor::from_param(page.users_cursor.as_deref());
+
+    let community_page =
+        CommunityModel::list_all(&ctx.db, communities_cursor.as_ref(), ADMIN_PER_PAGE)
+            .await
+            .map_err(|_| Error::InternalServerError)?;
 
     let mut communities: Vec<serde_json::Value> = Vec::new();
-    for c in all_communities {
+    for c in community_page.items {
         let member_count = community_members::Entity::find()
             .filter(community_members::Column::CommunityId.eq(c.id))
             .count(&ctx.db)
@@ -64,11 +79,12 @@ pub async fn dashboard(
         }));
     }
 
-    let (all_users, _) = UserModel::list_all(&ctx.db, 0, 50)
+    let user_page = UserModel::list_all(&ctx.db, users_cursor.as_ref(), ADMIN_PER_PAGE)
         .await
         .map_err(|_| Error::InternalServerError)?;
 
-    let users: Vec<serde_json::Value> = all_users
+    let users: Vec<serde_json::Value> = user_page
+        .items
         .into_iter()
         .map(|u| {
             json!({
@@ -97,7 +113,9 @@ pub async fn dashboard(
         json!({
             "current_user": current_user,
             "communities": communities,
+            "communities_next_cursor": community_page.next_cursor,
             "users": users,
+            "users_next_cursor": user_page.next_cursor,
             "csrf_token": csrf_token,
         }),
         &theme,

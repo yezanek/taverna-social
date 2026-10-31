@@ -1,14 +1,19 @@
+use activitypub_federation::activity_sending::SendActivityTask;
 use anyhow::Result;
 use async_trait::async_trait;
 use loco_rs::{Result as LocoResult, app::AppContext, bgworker::BackgroundWorker};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    FromQueryResult, QueryFilter, Set, Statement,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use tracing::instrument;
 use url::Url;
 
 use crate::federation::activities::SendActivity;
-use crate::federation::traits::DbUser;
-use crate::models::_entities::outbound_activities;
+use crate::federation::traits::{DbCommunity, DbUser};
+use crate::models::_entities::{communities, outbound_activities, users};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeliverActivityArgs {
@@ -36,10 +41,6 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
         if row.state != "pending" {
             return Ok(());
         }
-
-        let (_public_key_pem, private_key_pem) = fetch_actor_keys(&self.db, &row.actor_ap_id)
-            .await
-            .map_err(|e| loco_rs::Error::string(&e.to_string()))?;
 
         // Build SendActivity wrapper from stored JSON
         let activity_json = &row.activity_json;
@@ -75,6 +76,13 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
 
         let data = federation_config.to_request_data();
 
+        let signer = match resolve_signer(&self.db, &row.actor_ap_id).await {
+            Ok(signer) => signer,
+            Err(e) => {
+                return update_failure(&self.db, &row, e).await;
+            }
+        };
+
         let mut any_failed = false;
         for inbox_str in &row.target_inboxes {
             let inbox_url = match Url::parse(inbox_str) {
@@ -85,35 +93,22 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
                 }
             };
 
-            // We need to provide a temporary actor with the correct private key.
-            // Since the actor is the key owner, we create a DbUser with the correct key.
-            // The private key needs to be set on the actor for the crate to use it for signing.
-            let temp_user =
-                match create_temp_user(&self.db, &row.actor_ap_id, &private_key_pem).await {
-                    Ok(u) => u,
-                    Err(e) => {
-                        tracing::warn!("Failed to create temp user for {}: {}", row.actor_ap_id, e);
-                        any_failed = true;
-                        continue;
-                    }
-                };
-            let actor = match DbUser::new(temp_user) {
-                Ok(a) => a,
+            let prepared = match &signer {
+                Signer::User(actor) => {
+                    SendActivityTask::prepare(&send_activity, actor, vec![inbox_url], &data).await
+                }
+                Signer::Community(actor) => {
+                    SendActivityTask::prepare(&send_activity, actor, vec![inbox_url], &data).await
+                }
+            };
+            let tasks = match prepared {
+                Ok(tasks) => tasks,
                 Err(e) => {
-                    tracing::warn!("Failed to create DbUser for {}: {}", row.actor_ap_id, e);
+                    tracing::warn!("Failed to prepare delivery to {}: {:#}", inbox_str, e);
                     any_failed = true;
                     continue;
                 }
             };
-
-            let tasks = activitypub_federation::activity_sending::SendActivityTask::prepare(
-                &send_activity,
-                &actor,
-                vec![inbox_url.clone()],
-                &data,
-            )
-            .await
-            .map_err(|e| loco_rs::Error::string(&format!("Prepare error: {:#}", e)))?;
 
             for task in &tasks {
                 match task.sign_and_send(&data).await {
@@ -134,80 +129,31 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
     }
 }
 
-/// Create a temporary users::Model with the correct private key for signing.
-/// This user may not exist in the DB - we create it temporarily for the Actor trait impl.
-async fn create_temp_user(
-    db: &DatabaseConnection,
-    actor_ap_id: &str,
-    private_key_pem: &str,
-) -> Result<crate::models::_entities::users::Model> {
-    // First try to find existing user
-    if let Ok(Some(user)) = crate::models::_entities::users::Entity::find()
-        .filter(crate::models::_entities::users::Column::ApId.eq(actor_ap_id))
-        .one(db)
-        .await
-    {
-        return Ok(user);
-    }
-
-    // Try finding as community
-    if let Ok(Some(community)) = crate::models::_entities::communities::Entity::find()
-        .filter(crate::models::_entities::communities::Column::ApId.eq(actor_ap_id))
-        .one(db)
-        .await
-    {
-        // Return a synthetic user-like model for signing purposes
-        let public_key = community.public_key.clone();
-        let fake_model = crate::models::_entities::users::Model {
-            id: uuid::Uuid::nil(),
-            username: community.slug.clone(),
-            email: None,
-            password_hash: None,
-            display_name: Some(community.name.clone()),
-            bio: community.description.clone(),
-            avatar_url: None,
-            ap_id: actor_ap_id.to_string(),
-            public_key,
-            private_key: Some(private_key_pem.to_string()),
-            is_local: true,
-            is_admin: false,
-            is_banned: false,
-            email_verified: false,
-            standing_score: 0,
-            suspended_at: None,
-            inbox_url: community.inbox_url.clone(),
-            shared_inbox_url: None,
-            followers_url: community.followers_url.clone(),
-            last_fetched_at: None,
-            created_at: chrono::Utc::now().into(),
-            updated_at: chrono::Utc::now().into(),
-        };
-        return Ok(fake_model);
-    }
-
-    anyhow::bail!("No actor found for: {}", actor_ap_id)
+/// The local actor whose key signs an outbound activity.
+enum Signer {
+    User(DbUser),
+    Community(DbCommunity),
 }
 
-async fn fetch_actor_keys(db: &DatabaseConnection, actor_ap_id: &str) -> Result<(String, String)> {
-    if let Ok(Some(user)) = crate::models::_entities::users::Entity::find()
-        .filter(crate::models::_entities::users::Column::ApId.eq(actor_ap_id))
+/// Finds the local user or community that owns `actor_ap_id` and has a private key.
+async fn resolve_signer(db: &DatabaseConnection, actor_ap_id: &str) -> Result<Signer> {
+    if let Some(user) = users::Entity::find()
+        .filter(users::Column::ApId.eq(actor_ap_id))
         .one(db)
-        .await
-        && let Some(pk) = &user.private_key
+        .await?
+        && user.private_key.is_some()
     {
-        return Ok((user.public_key.clone(), pk.clone()));
+        return Ok(Signer::User(DbUser::new(user)?));
     }
-
-    if let Ok(Some(community)) = crate::models::_entities::communities::Entity::find()
-        .filter(crate::models::_entities::communities::Column::ApId.eq(actor_ap_id))
+    if let Some(community) = communities::Entity::find()
+        .filter(communities::Column::ApId.eq(actor_ap_id))
         .one(db)
-        .await
-        && let Some(pk) = &community.private_key
+        .await?
+        && community.private_key.is_some()
     {
-        return Ok((community.public_key.clone(), pk.clone()));
+        return Ok(Signer::Community(DbCommunity::new(community)?));
     }
-
-    anyhow::bail!("No private key found for actor: {}", actor_ap_id)
+    anyhow::bail!("No local actor with a private key for: {}", actor_ap_id)
 }
 
 async fn update_failure(
@@ -257,16 +203,15 @@ fn backoff_seconds(attempt: i32) -> u64 {
     }
 }
 
-pub async fn enqueue_to_followers(
+/// Queues an activity for delivery (ADR-019). Request handlers call this and
+/// return immediately; [`dispatch_due`] hands due rows to the worker.
+pub async fn enqueue_activity(
     db: &DatabaseConnection,
     activity: &serde_json::Value,
     actor_ap_id: &str,
-    follower_inboxes: Vec<String>,
+    inboxes: Vec<String>,
 ) -> Result<()> {
-    let mut unique_inboxes: Vec<String> = follower_inboxes
-        .into_iter()
-        .filter(|i| !i.is_empty())
-        .collect();
+    let mut unique_inboxes: Vec<String> = inboxes.into_iter().filter(|i| !i.is_empty()).collect();
     unique_inboxes.sort();
     unique_inboxes.dedup();
 
@@ -292,58 +237,120 @@ pub async fn enqueue_to_followers(
     Ok(())
 }
 
-pub async fn get_follower_inboxes_for_community(
+/// How long a dispatched row is leased before it can be picked up again.
+const DISPATCH_LEASE_SECONDS: i64 = 300;
+
+/// Claims pending activities that are due and hands each to the delivery worker.
+///
+/// Claiming pushes `next_attempt_at` forward by a lease, under
+/// `FOR UPDATE SKIP LOCKED`, so concurrent pollers never pick the same row.
+/// The worker then marks the row sent, or reschedules it with backoff.
+pub async fn dispatch_due(ctx: &AppContext, batch_size: u64) -> Result<usize> {
+    let db = &ctx.db;
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            r#"
+            UPDATE outbound_activities
+               SET next_attempt_at = NOW() + make_interval(secs => $1)
+             WHERE id IN (
+               SELECT id FROM outbound_activities
+                WHERE state = 'pending' AND next_attempt_at <= NOW()
+                ORDER BY next_attempt_at
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED)
+            RETURNING id
+            "#,
+            [
+                (DISPATCH_LEASE_SECONDS as f64).into(),
+                (batch_size as i64).into(),
+            ],
+        ))
+        .await?;
+
+    let mut dispatched = 0;
+    for row in rows {
+        let activity_id: uuid::Uuid = row.try_get("", "id")?;
+        DeliverActivityWorker::perform_later(ctx, DeliverActivityArgs { activity_id })
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to dispatch {}: {}", activity_id, e))?;
+        dispatched += 1;
+    }
+    Ok(dispatched)
+}
+
+/// One row per accepted remote follower: their inbox and shared inbox.
+#[derive(Debug, FromQueryResult)]
+struct FollowerInbox {
+    inbox_url: String,
+    shared_inbox_url: Option<String>,
+}
+
+/// Prefers each follower's shared inbox, then removes duplicates, so one
+/// request goes to each instance instead of one per follower (Part B7).
+fn dedup_inboxes(followers: Vec<FollowerInbox>) -> Vec<Url> {
+    let mut seen = HashSet::new();
+    followers
+        .into_iter()
+        .map(|f| {
+            f.shared_inbox_url
+                .filter(|s| !s.is_empty())
+                .unwrap_or(f.inbox_url)
+        })
+        .filter(|url| !url.is_empty() && seen.insert(url.clone()))
+        .filter_map(|url| match Url::parse(&url) {
+            Ok(u) => Some(u),
+            Err(e) => {
+                tracing::warn!("Skipping invalid follower inbox {}: {}", url, e);
+                None
+            }
+        })
+        .collect()
+}
+
+async fn follower_inboxes(
+    db: &DatabaseConnection,
+    target_column: &str,
+    target_id: uuid::Uuid,
+) -> Result<Vec<Url>> {
+    let sql = format!(
+        r#"
+        SELECT ra.inbox_url, ra.shared_inbox_url
+          FROM follows f
+          JOIN remote_actors ra ON ra.ap_id = f.remote_follower_ap_id
+         WHERE f.{target_column} = $1 AND f.accepted = true
+        "#
+    );
+    let followers = FollowerInbox::find_by_statement(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        sql,
+        [target_id.into()],
+    ))
+    .all(db)
+    .await?;
+    Ok(dedup_inboxes(followers))
+}
+
+/// Deduplicated inboxes of a local community's remote followers.
+pub async fn get_follower_inboxes_deduplicated(
     db: &DatabaseConnection,
     community_id: uuid::Uuid,
 ) -> Result<Vec<String>> {
-    use crate::models::_entities::{follows, users};
-    use sea_orm::QueryFilter;
-
-    let follow_relations = follows::Entity::find()
-        .filter(follows::Column::CommunityId.eq(community_id))
-        .filter(follows::Column::Accepted.eq(true))
-        .all(db)
-        .await?;
-
-    let mut inboxes = Vec::new();
-    for f in &follow_relations {
-        if let Ok(Some(u)) = users::Entity::find_by_id(f.follower_id).one(db).await
-            && !u.is_local
-            && !u.inbox_url.is_empty()
-        {
-            inboxes.push(u.inbox_url.clone());
-        }
-    }
-
-    inboxes.sort();
-    inboxes.dedup();
-    Ok(inboxes)
+    Ok(follower_inboxes(db, "community_id", community_id)
+        .await?
+        .into_iter()
+        .map(String::from)
+        .collect())
 }
 
-pub async fn get_user_follower_inboxes(
+/// Deduplicated inboxes of a local user's remote followers.
+pub async fn get_user_follower_inboxes_deduplicated(
     db: &DatabaseConnection,
     user_id: uuid::Uuid,
 ) -> Result<Vec<String>> {
-    use crate::models::_entities::{follows, users};
-    use sea_orm::QueryFilter;
-
-    let follow_relations = follows::Entity::find()
-        .filter(follows::Column::FollowingId.eq(user_id))
-        .filter(follows::Column::Accepted.eq(true))
-        .all(db)
-        .await?;
-
-    let mut inboxes = Vec::new();
-    for f in &follow_relations {
-        if let Ok(Some(u)) = users::Entity::find_by_id(f.follower_id).one(db).await
-            && !u.is_local
-            && !u.inbox_url.is_empty()
-        {
-            inboxes.push(u.inbox_url.clone());
-        }
-    }
-
-    inboxes.sort();
-    inboxes.dedup();
-    Ok(inboxes)
+    Ok(follower_inboxes(db, "following_id", user_id)
+        .await?
+        .into_iter()
+        .map(String::from)
+        .collect())
 }

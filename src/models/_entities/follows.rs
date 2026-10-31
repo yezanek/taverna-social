@@ -8,12 +8,16 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub follower_id: Uuid,
+    pub follower_id: Option<Uuid>,
     pub following_id: Option<Uuid>,
     pub community_id: Option<Uuid>,
     #[sea_orm(column_type = "Text", nullable)]
     pub ap_id: Option<String>,
     pub accepted: bool,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub remote_follower_ap_id: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub remote_following_ap_id: Option<String>,
     pub created_at: DateTimeWithTimeZone,
 }
 

@@ -63,6 +63,7 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if users_next_cursor %}<div class="load-more" style="text-align:center;margin:1rem 0"><a href="/admin?users_cursor={{ users_next_cursor }}" class="btn">Load more</a></div>{% endif %}
 {% else %}
   <p>No users.</p>
 {% endif %}
@@ -106,6 +107,7 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if communities_next_cursor %}<div class="load-more" style="text-align:center;margin:1rem 0"><a href="/admin?communities_cursor={{ communities_next_cursor }}" class="btn">Load more</a></div>{% endif %}
 {% else %}
   <p style="color:var(--text-secondary)">No communities.</p>
 {% endif %}

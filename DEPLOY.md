@@ -18,6 +18,12 @@ pgmq must be installed as a PostgreSQL extension:
   JWT_SECRET=<openssl rand -hex 32>
   RUST_LOG=info
 
+## Configuration
+  cp config/production.example.yaml config/production.yaml
+  The template sets the connection pool for production load (10–100
+  connections) and enables response compression. config/production.yaml is
+  git-ignored.
+
 ## Build
   cargo build --release
   ./target/release/taverna-cli start
@@ -26,9 +32,23 @@ pgmq must be installed as a PostgreSQL extension:
   ./target/release/taverna-cli db migrate
 
 ## Reverse Proxy (Caddy example)
+  Caddy terminates TLS and serves HTTP/2:
   your-domain.com {
-    reverse_proxy localhost:3000
+    reverse_proxy localhost:3000 {
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Real-IP {remote_host}
+    }
+    encode gzip zstd
   }
+
+## Background jobs
+  The server process runs two background loops (not started in tests):
+  - every 5 seconds, queued outbound ActivityPub deliveries in
+    outbound_activities are handed to the delivery worker, with retries and
+    backoff;
+  - once a day, cached remote content (remote_actors, remote_posts,
+    remote_comments) past its stale_after time is deleted. Local content is
+    never touched by this job.
 
 ## First Run
   After deployment, create the first admin user via the registration page,

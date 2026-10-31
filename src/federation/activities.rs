@@ -1,6 +1,5 @@
 use activitypub_federation::config::Data;
 use activitypub_federation::traits::Activity;
-use activitypub_federation::traits::Object;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use serde::Serialize;
 use serde::Serializer;
@@ -8,7 +7,13 @@ use tracing::instrument;
 use url::Url;
 
 use crate::federation::protocol::*;
-use crate::models::_entities::{communities, federation_objects, follows, posts, users};
+use crate::models::_entities::{comments, communities, follows, posts, users};
+use crate::models::remote::{
+    RemoteActorModel, RemoteCommentModel, RemotePostModel, record_received_activity,
+};
+use crate::models::votes::VoteModel;
+use crate::workers::deliver_activity::{enqueue_activity, get_follower_inboxes_deduplicated};
+use uuid::Uuid;
 
 /// Wrapper for outbound activity JSON that implements Activity + Serialize.
 /// This allows us to send pre-built JSON activities through the crate's
@@ -99,20 +104,10 @@ impl Activity for TavernaActivity {
     #[instrument(skip(self, data))]
     async fn receive(self, data: &Data<Self::DataType>) -> Result<(), Self::Error> {
         let db = data.app_data();
-        let activity_id = self.id().as_str();
-        let now: chrono::DateTime<chrono::FixedOffset> = chrono::Utc::now().into();
-        let obj = federation_objects::ActiveModel {
-            id: Set(uuid::Uuid::new_v4()),
-            ap_id: Set(activity_id.to_string()),
-            object_type: Set("Activity".to_string()),
-            object_json: Set(serde_json::Value::Null),
-            fetched_at: Set(now),
-            created_at: Set(now),
-            updated_at: Set(now),
-        };
-        match obj.insert(db).await {
-            Ok(_) => {}
-            Err(sea_orm::DbErr::Exec(ref e)) if e.to_string().contains("duplicate key") => {
+        let activity_id = self.id().as_str().to_string();
+        match record_received_activity(db, &activity_id).await {
+            Ok(true) => {}
+            Ok(false) => {
                 tracing::debug!(activity_id, "skipping already-processed activity");
                 return Ok(());
             }
@@ -122,210 +117,205 @@ impl Activity for TavernaActivity {
         }
 
         match self {
-            TavernaActivity::CreateActivity(a) => handle_create(data, a).await,
+            TavernaActivity::CreateActivity(a) => handle_create(db, a).await,
             TavernaActivity::UpdateActivity(a) => handle_update(db, a).await,
             TavernaActivity::DeleteActivity(a) => handle_delete(db, a).await,
             TavernaActivity::FollowActivity(a) => handle_follow(db, a).await,
-            TavernaActivity::LikeActivity(a) => handle_like(db, a).await,
-            TavernaActivity::DislikeActivity(a) => handle_dislike(db, a).await,
+            TavernaActivity::LikeActivity(a) => {
+                handle_vote(db, a.actor.as_str(), a.object.as_str(), 1).await
+            }
+            TavernaActivity::DislikeActivity(a) => {
+                handle_vote(db, a.actor.as_str(), a.object.as_str(), -1).await
+            }
             TavernaActivity::AcceptFollowActivity(a) => handle_accept_follow(db, a).await,
             TavernaActivity::AnnounceActivity(a) => {
                 tracing::info!("Received Announce activity: {}", a.id);
                 Ok(())
             }
             TavernaActivity::UndoFollowActivity(a) => handle_undo_follow(db, a).await,
-            TavernaActivity::UndoLikeActivity(a) => handle_undo_like(db, a).await,
-            TavernaActivity::UndoDislikeActivity(a) => handle_undo_dislike(db, a).await,
+            TavernaActivity::UndoLikeActivity(a) => {
+                handle_undo_vote(db, a.actor.as_str(), a.object.object.as_str()).await
+            }
+            TavernaActivity::UndoDislikeActivity(a) => {
+                handle_undo_vote(db, a.actor.as_str(), a.object.object.as_str()).await
+            }
         }
     }
 }
 
 // ── Handler implementations ─────────────────────────────────
 
-async fn handle_create(
-    data: &Data<DatabaseConnection>,
-    activity: Create,
-) -> Result<(), anyhow::Error> {
-    let db = data.app_data();
-    let note = activity.object;
-
-    if note.in_reply_to.is_some() {
-        // It's a comment — use the Object trait's from_json for standardized verification + insertion
-        let _comment = crate::federation::traits::DbComment::from_json(note, data).await?;
-    } else {
-        // It's a post — use the Object trait's from_json for standardized verification + insertion
-        let db_post = crate::federation::traits::DbPost::from_json(note, data).await?;
-        let post = db_post.0;
-
-        // ★ THE ANNOUNCE PATTERN (SPEC.md §6.4)
-        // If the note was addressed to a community's followers, the community
-        // enqueues an Announce activity to all its followers.
-        if let Some(cid) = post.community_id
-            && let Some(community) = communities::Entity::find_by_id(cid).one(db).await?
+/// Finds the local community a remote Note is addressed to, if any.
+async fn addressed_community(
+    db: &DatabaseConnection,
+    note: &Note,
+    activity: &Create,
+) -> Result<Option<communities::Model>, anyhow::Error> {
+    for target in note
+        .to
+        .iter()
+        .chain(note.cc.iter())
+        .chain(activity.to.iter())
+        .chain(activity.cc.iter())
+    {
+        if let Some(c) = communities::Entity::find()
+            .filter(
+                sea_orm::Condition::any()
+                    .add(communities::Column::ApId.eq(target.as_str()))
+                    .add(communities::Column::FollowersUrl.eq(target.as_str())),
+            )
+            .one(db)
+            .await?
         {
-            let announce_id = build_announce_id(&community.ap_id, &cid, &post.id);
-            let announce_note = serde_json::json!({
-                "@context": AP_CONTEXT,
-                "id": post.ap_id,
-                "type": "Note",
-                "attributedTo": community.ap_id,
-                "content": post.body,
-                "name": post.title,
-                "published": post.published_at.to_rfc3339(),
-                "url": post.ap_id,
-                "to": [community.followers_url],
-                "cc": ["https://www.w3.org/ns/activitystreams#Public"],
-            });
-            let announce_activity = serde_json::json!({
-                "@context": AP_CONTEXT,
-                "id": announce_id,
-                "type": "Announce",
-                "actor": community.ap_id,
-                "object": announce_note,
-                "to": [community.followers_url],
-                "cc": ["https://www.w3.org/ns/activitystreams#Public"],
-                "published": chrono::Utc::now().to_rfc3339(),
-            });
+            return Ok(Some(c));
+        }
+    }
+    Ok(None)
+}
 
-            let inboxes =
-                crate::workers::deliver_activity::get_follower_inboxes_for_community(db, cid)
-                    .await
-                    .unwrap_or_default();
+/// Create{Note}: remote posts go to `remote_posts`, remote replies to
+/// `remote_comments` (ADR-017). Never writes to local `posts`/`comments`.
+async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), anyhow::Error> {
+    let note = &activity.object;
+    let actor = activity.actor.as_str();
+    if note.attributed_to.as_str() != actor {
+        anyhow::bail!(
+            "Create actor {} does not match attributedTo {}",
+            actor,
+            note.attributed_to
+        );
+    }
+    RemoteActorModel::ensure(db, actor).await?;
+    let raw = serde_json::to_value(note)?;
 
-            if !inboxes.is_empty()
-                && let Err(e) = crate::workers::deliver_activity::enqueue_to_followers(
-                    db,
-                    &announce_activity,
-                    &community.ap_id,
-                    inboxes,
-                )
-                .await
-            {
-                tracing::warn!(community_id = %cid, error = %e, "failed to enqueue announce to followers");
-            }
+    if let Some(in_reply_to) = &note.in_reply_to {
+        let Some(position) = RemoteCommentModel::resolve_parent(db, in_reply_to.as_str()).await?
+        else {
+            tracing::debug!(note = %note.id, parent = %in_reply_to, "reply to unknown object, ignoring");
+            return Ok(());
+        };
+        RemoteCommentModel::upsert(db, note, &position, raw).await?;
+        return Ok(());
+    }
+
+    let community = addressed_community(db, note, &activity).await?;
+    let (post, is_new) =
+        RemotePostModel::upsert(db, note, community.as_ref().map(|c| c.id), raw).await?;
+
+    // ★ THE ANNOUNCE PATTERN (SPEC.md §6.4)
+    // A post addressed to one of our communities is announced to its followers.
+    if is_new && let Some(community) = community.filter(|c| c.is_local) {
+        let announce_id = build_announce_id(&community.ap_id, &community.id, &Uuid::new_v4());
+        let announce_note = serde_json::json!({
+            "@context": AP_CONTEXT,
+            "id": post.ap_id,
+            "type": "Note",
+            "attributedTo": post.author_ap_id,
+            "content": post.body,
+            "name": post.title,
+            "published": post.published_at.to_rfc3339(),
+            "url": post.url.clone().unwrap_or_else(|| post.ap_id.clone()),
+            "to": [community.followers_url],
+            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
+        });
+        let announce_activity = serde_json::json!({
+            "@context": AP_CONTEXT,
+            "id": announce_id,
+            "type": "Announce",
+            "actor": community.ap_id,
+            "object": announce_note,
+            "to": [community.followers_url],
+            "cc": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": chrono::Utc::now().to_rfc3339(),
+        });
+
+        let inboxes = get_follower_inboxes_deduplicated(db, community.id)
+            .await
+            .unwrap_or_default();
+        if let Err(e) = enqueue_activity(db, &announce_activity, &community.ap_id, inboxes).await {
+            tracing::warn!(community_id = %community.id, error = %e, "failed to enqueue announce to followers");
         }
     }
 
     Ok(())
 }
 
+/// Update{Note}: only the author may edit, and only cached remote copies change.
 async fn handle_update(db: &DatabaseConnection, activity: Update) -> Result<(), anyhow::Error> {
-    let note = activity.object;
-    let ap_id = note.id.as_str();
-
-    if let Some(post) = posts::Entity::find()
-        .filter(posts::Column::ApId.eq(ap_id))
-        .one(db)
-        .await?
-    {
-        let mut active: posts::ActiveModel = post.into();
-        if let Some(content) = note.content {
-            active.body = Set(Some(content));
-        }
-        if let Some(name) = note.name {
-            active.title = Set(name);
-        }
-        active.updated_at = Set(chrono::Utc::now().into());
-        ActiveModelTrait::update(active, db).await?;
+    let actor = activity.actor.as_str();
+    if !RemotePostModel::apply_update(db, actor, &activity.object).await? {
+        RemoteCommentModel::apply_update(db, actor, &activity.object).await?;
     }
-
     Ok(())
 }
 
+/// Delete: only the author may delete, and only cached remote copies change.
 async fn handle_delete(db: &DatabaseConnection, activity: Delete) -> Result<(), anyhow::Error> {
-    let object_str = activity.object.as_str();
-
-    if let Some(post) = posts::Entity::find()
-        .filter(posts::Column::ApId.eq(object_str))
-        .one(db)
-        .await?
-    {
-        let mut active: posts::ActiveModel = post.into();
-        active.is_deleted = Set(true);
-        ActiveModelTrait::update(active, db).await?;
+    let actor = activity.actor.as_str();
+    let object = activity.object.as_str();
+    if !RemotePostModel::mark_deleted(db, actor, object).await? {
+        RemoteCommentModel::mark_deleted(db, actor, object).await?;
     }
-
     Ok(())
 }
 
 async fn handle_follow(db: &DatabaseConnection, activity: Follow) -> Result<(), anyhow::Error> {
-    let actor_ap_id = activity.actor.as_str();
     let object_ap_id = activity.object.as_str();
     let activity_id = activity.id.as_str();
+    let follower = RemoteActorModel::ensure(db, activity.actor.as_str()).await?;
 
-    // Idempotency: check if follow already exists
-    // We need to look up both actor and target first
-    let follower = match users::Entity::find()
-        .filter(users::Column::ApId.eq(actor_ap_id))
-        .one(db)
-        .await?
-    {
-        Some(u) => u,
-        None => return Ok(()), // Silently skip if follower doesn't exist yet
-    };
-
-    // Try user follow first
-    if let Some(target_user) = users::Entity::find()
-        .filter(users::Column::ApId.eq(object_ap_id))
-        .one(db)
-        .await?
-    {
-        // Check idempotency
-        if follows::Entity::find()
-            .filter(follows::Column::FollowerId.eq(follower.id))
-            .filter(follows::Column::FollowingId.eq(Some(target_user.id)))
+    let (target_ap_id, existing, following_id, community_id) = if let Some(target_user) =
+        users::Entity::find()
+            .filter(users::Column::ApId.eq(object_ap_id))
             .one(db)
             .await?
-            .is_some()
-        {
-            return Ok(());
-        }
-
-        follows::ActiveModel {
-            id: Set(uuid::Uuid::new_v4()),
-            follower_id: Set(follower.id),
-            following_id: Set(Some(target_user.id)),
-            community_id: Set(None),
-            ap_id: Set(Some(activity_id.to_string())),
-            accepted: Set(false),
-            created_at: Set(chrono::Utc::now().into()),
-        }
-        .insert(db)
-        .await?;
-
-        // Send Accept{Follow}
-        send_accept_follow(db, &activity, &target_user.ap_id, &follower.inbox_url).await?;
+    {
+        let existing = follows::Entity::find()
+            .filter(follows::Column::RemoteFollowerApId.eq(follower.ap_id.as_str()))
+            .filter(follows::Column::FollowingId.eq(target_user.id))
+            .one(db)
+            .await?;
+        (target_user.ap_id, existing, Some(target_user.id), None)
     } else if let Some(target_community) = communities::Entity::find()
         .filter(communities::Column::ApId.eq(object_ap_id))
+        .filter(communities::Column::IsLocal.eq(true))
         .one(db)
         .await?
     {
-        // Check idempotency
-        if follows::Entity::find()
-            .filter(follows::Column::FollowerId.eq(follower.id))
-            .filter(follows::Column::CommunityId.eq(Some(target_community.id)))
+        let existing = follows::Entity::find()
+            .filter(follows::Column::RemoteFollowerApId.eq(follower.ap_id.as_str()))
+            .filter(follows::Column::CommunityId.eq(target_community.id))
             .one(db)
-            .await?
-            .is_some()
-        {
-            return Ok(());
-        }
+            .await?;
+        (
+            target_community.ap_id,
+            existing,
+            None,
+            Some(target_community.id),
+        )
+    } else {
+        return Ok(());
+    };
 
+    if existing.is_none() {
         follows::ActiveModel {
-            id: Set(uuid::Uuid::new_v4()),
-            follower_id: Set(follower.id),
-            following_id: Set(None),
-            community_id: Set(Some(target_community.id)),
+            id: Set(Uuid::new_v4()),
+            follower_id: Set(None),
+            remote_follower_ap_id: Set(Some(follower.ap_id.clone())),
+            following_id: Set(following_id),
+            community_id: Set(community_id),
+            remote_following_ap_id: Set(None),
             ap_id: Set(Some(activity_id.to_string())),
             accepted: Set(false),
             created_at: Set(chrono::Utc::now().into()),
         }
         .insert(db)
         .await?;
-
-        send_accept_follow(db, &activity, &target_community.ap_id, &follower.inbox_url).await?;
     }
 
+    // ADR-008: auto-accept. Re-send Accept for repeated Follows too, in case
+    // the first Accept was lost.
+    send_accept_follow(db, &activity, &target_ap_id, &follower.inbox_url).await?;
     Ok(())
 }
 
@@ -354,7 +344,7 @@ async fn send_accept_follow(
 ) -> Result<(), anyhow::Error> {
     let accept_activity = serde_json::json!({
         "@context": AP_CONTEXT,
-        "id": format!("{}/accepts/{}", object_ap_id.trim_end_matches('/'), uuid::Uuid::new_v4()),
+        "id": format!("{}/accepts/{}", object_ap_id.trim_end_matches('/'), Uuid::new_v4()),
         "type": "Accept",
         "actor": object_ap_id,
         "object": {
@@ -367,16 +357,14 @@ async fn send_accept_follow(
         "to": [follow_activity.actor.as_str()],
     });
 
-    let inboxes = vec![follower_inbox.to_string()];
-    crate::workers::deliver_activity::enqueue_to_followers(
+    enqueue_activity(
         db,
         &accept_activity,
         object_ap_id,
-        inboxes,
+        vec![follower_inbox.to_string()],
     )
     .await?;
 
-    // Mark follow as accepted
     follows::Entity::update_many()
         .filter(follows::Column::ApId.eq(follow_activity.id.as_str()))
         .col_expr(
@@ -389,41 +377,56 @@ async fn send_accept_follow(
     Ok(())
 }
 
-async fn handle_like(db: &DatabaseConnection, activity: Like) -> Result<(), anyhow::Error> {
-    let object_str = activity.object.as_str();
-    let actor_ap_id = activity.actor.as_str();
-
-    let actor = ensure_remote_user(db, actor_ap_id).await?;
-
+/// Resolves a vote target to a local post or local comment id.
+async fn local_vote_target(
+    db: &DatabaseConnection,
+    object_ap_id: &str,
+) -> Result<Option<(Option<Uuid>, Option<Uuid>)>, anyhow::Error> {
     if let Some(post) = posts::Entity::find()
-        .filter(posts::Column::ApId.eq(object_str))
+        .filter(posts::Column::ApId.eq(object_ap_id))
         .one(db)
         .await?
-        && let Err(e) =
-            crate::models::votes::VoteModel::cast_vote(db, actor.id, Some(post.id), None, 1).await
     {
-        tracing::warn!(actor_id = %actor.id, post_id = %post.id, error = %e, "failed to record like");
+        return Ok(Some((Some(post.id), None)));
     }
+    if let Some(comment) = comments::Entity::find()
+        .filter(comments::Column::ApId.eq(object_ap_id))
+        .one(db)
+        .await?
+    {
+        return Ok(Some((None, Some(comment.id))));
+    }
+    Ok(None)
+}
 
+/// Like (+1) / Dislike (-1) from a remote actor on local content.
+async fn handle_vote(
+    db: &DatabaseConnection,
+    actor_ap_id: &str,
+    object_ap_id: &str,
+    value: i16,
+) -> Result<(), anyhow::Error> {
+    let Some((post_id, comment_id)) = local_vote_target(db, object_ap_id).await? else {
+        return Ok(());
+    };
+    RemoteActorModel::ensure(db, actor_ap_id).await?;
+    if let Err(e) = VoteModel::cast_remote_vote(db, actor_ap_id, post_id, comment_id, value).await {
+        tracing::warn!(actor = actor_ap_id, object = object_ap_id, error = %e, "failed to record remote vote");
+    }
     Ok(())
 }
 
-async fn handle_dislike(db: &DatabaseConnection, activity: Dislike) -> Result<(), anyhow::Error> {
-    let object_str = activity.object.as_str();
-    let actor_ap_id = activity.actor.as_str();
-
-    let actor = ensure_remote_user(db, actor_ap_id).await?;
-
-    if let Some(post) = posts::Entity::find()
-        .filter(posts::Column::ApId.eq(object_str))
-        .one(db)
-        .await?
-        && let Err(e) =
-            crate::models::votes::VoteModel::cast_vote(db, actor.id, Some(post.id), None, -1).await
-    {
-        tracing::warn!(actor_id = %actor.id, post_id = %post.id, error = %e, "failed to record dislike");
+async fn handle_undo_vote(
+    db: &DatabaseConnection,
+    actor_ap_id: &str,
+    object_ap_id: &str,
+) -> Result<(), anyhow::Error> {
+    let Some((post_id, comment_id)) = local_vote_target(db, object_ap_id).await? else {
+        return Ok(());
+    };
+    if let Err(e) = VoteModel::delete_remote_vote(db, actor_ap_id, post_id, comment_id).await {
+        tracing::warn!(actor = actor_ap_id, object = object_ap_id, error = %e, "failed to delete remote vote");
     }
-
     Ok(())
 }
 
@@ -431,99 +434,10 @@ async fn handle_undo_follow(
     db: &DatabaseConnection,
     activity: UndoFollow,
 ) -> Result<(), anyhow::Error> {
-    let follow_ap_id = activity.object.id.as_str();
-
     follows::Entity::delete_many()
-        .filter(follows::Column::ApId.eq(follow_ap_id))
+        .filter(follows::Column::ApId.eq(activity.object.id.as_str()))
+        .filter(follows::Column::RemoteFollowerApId.eq(activity.actor.as_str()))
         .exec(db)
         .await?;
-
     Ok(())
-}
-
-async fn handle_undo_like(
-    db: &DatabaseConnection,
-    activity: UndoLike,
-) -> Result<(), anyhow::Error> {
-    let object_str = activity.object.object.as_str();
-    let actor_ap_id = activity.actor.as_str();
-
-    let actor = ensure_remote_user(db, actor_ap_id).await?;
-
-    if let Some(post) = posts::Entity::find()
-        .filter(posts::Column::ApId.eq(object_str))
-        .one(db)
-        .await?
-        && let Err(e) =
-            crate::models::votes::VoteModel::delete_vote(db, actor.id, Some(post.id), None).await
-    {
-        tracing::warn!(actor_id = %actor.id, post_id = %post.id, error = %e, "failed to delete like");
-    }
-
-    Ok(())
-}
-
-async fn handle_undo_dislike(
-    db: &DatabaseConnection,
-    activity: UndoDislike,
-) -> Result<(), anyhow::Error> {
-    let object_str = activity.object.object.as_str();
-    let actor_ap_id = activity.actor.as_str();
-
-    let actor = ensure_remote_user(db, actor_ap_id).await?;
-
-    if let Some(post) = posts::Entity::find()
-        .filter(posts::Column::ApId.eq(object_str))
-        .one(db)
-        .await?
-        && let Err(e) =
-            crate::models::votes::VoteModel::delete_vote(db, actor.id, Some(post.id), None).await
-    {
-        tracing::warn!(actor_id = %actor.id, post_id = %post.id, error = %e, "failed to delete dislike");
-    }
-
-    Ok(())
-}
-
-// ── Helpers ─────────────────────────────────────────────────
-
-pub(crate) async fn ensure_remote_user(
-    db: &DatabaseConnection,
-    ap_id: &str,
-) -> Result<users::Model, anyhow::Error> {
-    if let Some(user) = users::Entity::find()
-        .filter(users::Column::ApId.eq(ap_id))
-        .one(db)
-        .await?
-    {
-        return Ok(user);
-    }
-
-    let id = uuid::Uuid::new_v4();
-    let new_user = users::ActiveModel {
-        id: Set(id),
-        username: Set(format!("remote_{}", &id.to_string()[..8])),
-        email: Set(None),
-        password_hash: Set(None),
-        display_name: Set(Some(ap_id.to_string())),
-        bio: Set(None),
-        avatar_url: Set(None),
-        ap_id: Set(ap_id.to_string()),
-        public_key: Set(String::new()),
-        private_key: Set(None),
-        is_local: Set(false),
-        is_admin: Set(false),
-        is_banned: Set(false),
-        email_verified: Set(false),
-        standing_score: Set(0),
-        suspended_at: Set(None),
-        inbox_url: Set(format!("{}/inbox", ap_id.trim_end_matches('/'))),
-        shared_inbox_url: Set(None),
-        followers_url: Set(format!("{}/followers", ap_id.trim_end_matches('/'))),
-        last_fetched_at: Set(None),
-        created_at: Set(chrono::Utc::now().into()),
-        updated_at: Set(chrono::Utc::now().into()),
-    };
-
-    Ok(new_user.insert(db).await?)
 }

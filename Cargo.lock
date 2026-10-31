@@ -5205,6 +5205,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "axum-test",
+ "base64",
  "chrono",
  "dotenvy",
  "futures",

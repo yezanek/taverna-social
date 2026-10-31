@@ -51,6 +51,7 @@ impl Hooks for App {
         Ok(vec![
             Box::new(initializers::view_engine::ViewEngineInitializer),
             Box::new(initializers::rate_limiter::RateLimiterInitializer),
+            Box::new(initializers::federation_jobs::FederationJobsInitializer),
         ])
     }
 
@@ -253,6 +254,11 @@ impl Hooks for App {
             .register(crate::workers::deliver_activity::DeliverActivityWorker {
                 db: ctx.db.clone(),
             })
+            .await?;
+        queue
+            .register(
+                crate::workers::expire_remote_cache::ExpireRemoteCacheWorker { db: ctx.db.clone() },
+            )
             .await?;
         Ok(())
     }
