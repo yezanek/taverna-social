@@ -7,7 +7,6 @@ use sea_orm::{
     FromQueryResult, QueryFilter, Set, Statement,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use tracing::instrument;
 use url::Url;
 
@@ -279,35 +278,16 @@ pub async fn dispatch_due(ctx: &AppContext, batch_size: u64) -> Result<usize> {
     Ok(dispatched)
 }
 
-/// One row per accepted remote follower: their inbox and shared inbox.
+/// One deduplicated delivery inbox.
 #[derive(Debug, FromQueryResult)]
 struct FollowerInbox {
-    inbox_url: String,
-    shared_inbox_url: Option<String>,
+    inbox: String,
 }
 
-/// Prefers each follower's shared inbox, then removes duplicates, so one
-/// request goes to each instance instead of one per follower (Part B7).
-fn dedup_inboxes(followers: Vec<FollowerInbox>) -> Vec<Url> {
-    let mut seen = HashSet::new();
-    followers
-        .into_iter()
-        .map(|f| {
-            f.shared_inbox_url
-                .filter(|s| !s.is_empty())
-                .unwrap_or(f.inbox_url)
-        })
-        .filter(|url| !url.is_empty() && seen.insert(url.clone()))
-        .filter_map(|url| match Url::parse(&url) {
-            Ok(u) => Some(u),
-            Err(e) => {
-                tracing::warn!("Skipping invalid follower inbox {}: {}", url, e);
-                None
-            }
-        })
-        .collect()
-}
-
+/// Inboxes of accepted remote followers of `target_id`. Each follower's
+/// shared inbox is preferred and duplicates are removed in SQL, so one
+/// request goes to each instance instead of one per follower (Part B7) and
+/// only one row per instance leaves the database.
 async fn follower_inboxes(
     db: &DatabaseConnection,
     target_column: &str,
@@ -315,20 +295,30 @@ async fn follower_inboxes(
 ) -> Result<Vec<Url>> {
     let sql = format!(
         r#"
-        SELECT ra.inbox_url, ra.shared_inbox_url
+        SELECT DISTINCT COALESCE(NULLIF(ra.shared_inbox_url, ''), ra.inbox_url) AS inbox
           FROM follows f
           JOIN remote_actors ra ON ra.ap_id = f.remote_follower_ap_id
          WHERE f.{target_column} = $1 AND f.accepted = true
+           AND COALESCE(NULLIF(ra.shared_inbox_url, ''), ra.inbox_url) <> ''
         "#
     );
-    let followers = FollowerInbox::find_by_statement(Statement::from_sql_and_values(
+    let rows = FollowerInbox::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
         sql,
         [target_id.into()],
     ))
     .all(db)
     .await?;
-    Ok(dedup_inboxes(followers))
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| match Url::parse(&row.inbox) {
+            Ok(u) => Some(u),
+            Err(e) => {
+                tracing::warn!("Skipping invalid follower inbox {}: {}", row.inbox, e);
+                None
+            }
+        })
+        .collect())
 }
 
 /// Deduplicated inboxes of a local community's remote followers.
