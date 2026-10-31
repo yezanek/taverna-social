@@ -18,7 +18,7 @@ mod tests {
     fn setup() {
         dotenvy::dotenv().ok();
         unsafe {
-            std::env::set_var("DOMAIN", "localhost:5150");
+            std::env::set_var("TAVERNA_DOMAIN", "localhost:5150");
         }
     }
 
