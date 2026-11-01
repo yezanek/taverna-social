@@ -2,26 +2,16 @@ use axum::Extension;
 use loco_rs::prelude::*;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter};
 use serde_json::json;
-use std::sync::OnceLock;
-use std::time::Instant;
-use tokio::sync::Mutex;
+use std::time::Duration;
 use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
 use crate::models::_entities::{posts, users};
 use crate::models::instance_settings;
 
-struct NodeInfoCache {
-    counts: (usize, usize),
-    cached_at: Instant,
-}
-
-const CACHE_DURATION_SECS: u64 = 300;
-
-fn cache() -> &'static Mutex<Option<NodeInfoCache>> {
-    static CACHE: OnceLock<Mutex<Option<NodeInfoCache>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
-}
+/// How long the user and post counts are cached in `ctx.cache`.
+const COUNTS_TTL: Duration = Duration::from_secs(300);
+const COUNTS_CACHE_KEY: &str = "nodeinfo:counts";
 
 /// Serves the NodeInfo well-known endpoint pointing to the schema URL.
 #[instrument(skip(taverna))]
@@ -39,7 +29,12 @@ pub async fn well_known_nodeinfo(Extension(taverna): Extension<TavernaConfig>) -
 /// Serves the NodeInfo 2.0 document with usage statistics.
 #[instrument(skip(ctx))]
 pub async fn nodeinfo_v2(State(ctx): State<AppContext>) -> Result<Response> {
-    let (total_users, total_posts) = get_cached_counts(&ctx.db).await?;
+    let (total_users, total_posts) = ctx
+        .cache
+        .get_or_insert_with_expiry(COUNTS_CACHE_KEY, COUNTS_TTL, async {
+            Ok(count_users_and_posts(&ctx.db).await?)
+        })
+        .await?;
     let settings = instance_settings::load(&ctx.db).await?;
 
     let info = json!({
@@ -60,30 +55,16 @@ pub async fn nodeinfo_v2(State(ctx): State<AppContext>) -> Result<Response> {
     Ok(axum::Json(info).into_response())
 }
 
-async fn get_cached_counts(db: &DatabaseConnection) -> Result<(usize, usize), sea_orm::DbErr> {
-    let mut guard = cache().lock().await;
-    if let Some(ref cache_data) = *guard
-        && cache_data.cached_at.elapsed().as_secs() < CACHE_DURATION_SECS
-    {
-        return Ok(cache_data.counts);
-    }
-
+async fn count_users_and_posts(db: &DatabaseConnection) -> Result<(u64, u64), sea_orm::DbErr> {
     let total_users = users::Entity::find()
         .filter(users::Column::IsLocal.eq(true))
         .count(db)
-        .await? as usize;
+        .await?;
 
     let total_posts = posts::Entity::find()
         .filter(posts::Column::IsDeleted.eq(false))
         .count(db)
-        .await? as usize;
+        .await?;
 
-    let counts = (total_users, total_posts);
-
-    *guard = Some(NodeInfoCache {
-        counts,
-        cached_at: Instant::now(),
-    });
-
-    Ok(counts)
+    Ok((total_users, total_posts))
 }

@@ -318,3 +318,22 @@ Announce carried a bare Note.
 the trait implementations (outboxes sent raw markdown and attributed
 community posts to the community), and blanket `InternalServerError`
 mapping hid every database error from the logs.
+
+## ADR-025: Taverna settings in Loco's `settings:` block; NodeInfo uses `ctx.cache`
+
+**Decision:**
+- `TavernaConfig` is deserialized from `ctx.config.settings` (the
+  `settings:` block of `config/<env>.yaml`) in `App::after_context`, instead
+  of being read from environment variables in code. The YAML pulls
+  per-deployment values from the same environment variables as before
+  (`BASE_URL`, `TAVERNA_DOMAIN`, `FEDERATION_ENABLED`, `BLOCKED_DOMAINS`,
+  `HTTP_SIGNATURE_EXPIRY_SECONDS`, `RATE_LIMITING_ENABLED`) with `get_env`.
+  The undocumented `DOMAIN` fallback for `TAVERNA_DOMAIN` is gone.
+- NodeInfo caches its user and post counts in Loco's `ctx.cache`
+  (`get_or_insert_with_expiry`, 5 minutes). Every config sets
+  `cache: { kind: InMem }`, because Loco's default null cache would turn the
+  caching off.
+
+**Reason:** One file lists every setting and its default, and the
+hand-rolled `static Mutex` cache duplicated what Loco already provides.
+

@@ -25,17 +25,24 @@ pub struct DeliverActivityArgs {
 
 pub struct DeliverActivityWorker {
     db: DatabaseConnection,
+    /// Loco's config, for building a federation config if the store has none.
+    config: loco_rs::config::Config,
     /// The app's federation config from Loco's shared store, so deliveries
     /// share one HTTP client and its keep-alive connections (Phase 8, B6).
-    /// Built from the environment on first use if the store has none.
+    /// Built from the `settings:` config on first use if the store has none.
     federation: Arc<OnceCell<TavernaFederation>>,
 }
 
 impl DeliverActivityWorker {
     #[must_use]
-    pub fn new(db: DatabaseConnection, federation: Option<TavernaFederation>) -> Self {
+    pub fn new(
+        db: DatabaseConnection,
+        config: loco_rs::config::Config,
+        federation: Option<TavernaFederation>,
+    ) -> Self {
         Self {
             db,
+            config,
             federation: Arc::new(OnceCell::new_with(federation)),
         }
     }
@@ -43,7 +50,7 @@ impl DeliverActivityWorker {
     async fn federation_config(&self) -> Result<&TavernaFederation> {
         self.federation
             .get_or_try_init(|| async {
-                let taverna = TavernaConfig::from_env()?;
+                let taverna = TavernaConfig::from_config(&self.config)?;
                 Ok(crate::federation::build_config(self.db.clone(), &taverna.domain).await?)
             })
             .await
@@ -53,7 +60,11 @@ impl DeliverActivityWorker {
 #[async_trait]
 impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
     fn build(ctx: &AppContext) -> Self {
-        Self::new(ctx.db.clone(), ctx.shared_store.get::<TavernaFederation>())
+        Self::new(
+            ctx.db.clone(),
+            ctx.config.clone(),
+            ctx.shared_store.get::<TavernaFederation>(),
+        )
     }
 
     #[instrument(skip(self))]

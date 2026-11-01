@@ -18,6 +18,12 @@ pgmq must be installed as a PostgreSQL extension:
   JWT_SECRET=<openssl rand -hex 32>
   RUST_LOG=info
 
+  Optional (defaults in config/production.example.yaml, `settings:` block):
+  FEDERATION_ENABLED=true|false
+  BLOCKED_DOMAINS=spam.example,bad.example
+  HTTP_SIGNATURE_EXPIRY_SECONDS=30
+  RATE_LIMITING_ENABLED=true|false
+
 ## Configuration
   cp config/production.example.yaml config/production.yaml
   The template sets the connection pool for production load (10–100

@@ -58,3 +58,22 @@ auth:
     location:
       from: Cookie
       name: access_token
+
+# Taverna's own settings (src/common/config.rs). Deployment-specific values
+# come from the environment; the defaults here are for production; BASE_URL and TAVERNA_DOMAIN must be set.
+settings:
+  base_url: <%= get_env(name="BASE_URL", default="https://taverna.example.com") %>
+  domain: <%= get_env(name="TAVERNA_DOMAIN", default="taverna.example.com") %>
+  federation:
+    enabled: <%= get_env(name="FEDERATION_ENABLED", default="true") %>
+    # Comma-separated, e.g. BLOCKED_DOMAINS="spam.example,bad.example"
+    blocked_domains: "<%= get_env(name="BLOCKED_DOMAINS", default="") %>"
+    http_signature_expiry_seconds: <%= get_env(name="HTTP_SIGNATURE_EXPIRY_SECONDS", default="30") %>
+  rate_limiting:
+    enabled: <%= get_env(name="RATE_LIMITING_ENABLED", default="true") %>
+
+# In-memory cache behind `ctx.cache` (NodeInfo counts). Loco's default is the
+# null cache, which would turn caching off.
+cache:
+  kind: InMem
+  max_capacity: 33554432

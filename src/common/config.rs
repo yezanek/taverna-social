@@ -1,65 +1,109 @@
 use anyhow::{Result, anyhow};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
+/// Taverna's own settings, read from the `settings:` block of
+/// `config/<env>.yaml`. Values that differ per deployment are pulled from the
+/// environment there with `get_env`, so the YAML is the one place that lists
+/// every setting and its default.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TavernaConfig {
     pub base_url: String,
     pub domain: String,
     pub federation: FederationSettings,
+    #[serde(default)]
+    pub rate_limiting: RateLimitSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FederationSettings {
     pub enabled: bool,
+    /// A YAML list, or a comma-separated string (as `BLOCKED_DOMAINS` is).
+    #[serde(default, deserialize_with = "list_or_comma_separated")]
     pub blocked_domains: Vec<String>,
     pub http_signature_expiry_seconds: u32,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for RateLimitSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn list_or_comma_separated<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ListOrString {
+        List(Vec<String>),
+        String(String),
+    }
+
+    let items = match Option::<ListOrString>::deserialize(deserializer)? {
+        None => vec![],
+        Some(ListOrString::List(items)) => items,
+        Some(ListOrString::String(s)) => s.split(',').map(str::to_string).collect(),
+    };
+    Ok(items
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
 impl TavernaConfig {
-    pub fn from_env() -> Result<Self> {
-        let base_url =
-            std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
-        let domain = std::env::var("TAVERNA_DOMAIN")
-            .or_else(|_| std::env::var("DOMAIN"))
-            .unwrap_or_else(|_| "localhost:3000".to_string());
-        let federation_enabled = match std::env::var("FEDERATION_ENABLED") {
-            Ok(v) => match v.to_lowercase().as_str() {
-                "true" => true,
-                "false" => false,
-                other => {
-                    return Err(anyhow!(
-                        "Invalid FEDERATION_ENABLED value '{}': expected 'true' or 'false'",
-                        other
-                    ));
-                }
-            },
-            Err(_) => false,
-        };
+    /// Deserializes the settings from Loco's `settings:` config block.
+    pub fn from_config(config: &loco_rs::config::Config) -> Result<Self> {
+        let settings = config
+            .settings
+            .clone()
+            .ok_or_else(|| anyhow!("the `settings:` block is missing from the config file"))?;
+        serde_json::from_value(settings).map_err(|e| anyhow!("invalid `settings:` block: {e}"))
+    }
+}
 
-        let blocked_domains: Vec<String> = match std::env::var("BLOCKED_DOMAINS") {
-            Ok(val) => val
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-            Err(_) => vec![],
-        };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
-        let http_signature_expiry_seconds = match std::env::var("HTTP_SIGNATURE_EXPIRY_SECONDS") {
-            Ok(val) => val
-                .parse::<u32>()
-                .map_err(|e| anyhow!("Invalid HTTP_SIGNATURE_EXPIRY_SECONDS '{}': {}", val, e))?,
-            Err(_) => 30,
-        };
+    fn parse(blocked: serde_json::Value) -> Vec<String> {
+        let config: TavernaConfig = serde_json::from_value(json!({
+            "base_url": "http://localhost:3000",
+            "domain": "localhost:3000",
+            "federation": {
+                "enabled": false,
+                "blocked_domains": blocked,
+                "http_signature_expiry_seconds": 30
+            }
+        }))
+        .expect("test settings deserialize");
+        assert!(config.rate_limiting.enabled);
+        config.federation.blocked_domains
+    }
 
-        Ok(Self {
-            base_url,
-            domain,
-            federation: FederationSettings {
-                enabled: federation_enabled,
-                blocked_domains,
-                http_signature_expiry_seconds,
-            },
-        })
+    #[test]
+    fn blocked_domains_accepts_list_and_comma_string() {
+        assert_eq!(
+            parse(json!(["a.example", " b.example "])),
+            ["a.example", "b.example"]
+        );
+        assert_eq!(
+            parse(json!("a.example, b.example,,")),
+            ["a.example", "b.example"]
+        );
+        assert!(parse(json!("")).is_empty());
+        assert!(parse(json!(null)).is_empty());
     }
 }
