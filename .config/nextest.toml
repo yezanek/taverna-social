@@ -1,3 +1,0 @@
-[profile.default]
-slow-timeout = { period = "120s", max-integration = "600s" }
-test-threads = 4

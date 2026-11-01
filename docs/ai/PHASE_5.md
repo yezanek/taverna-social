@@ -1,5 +1,11 @@
 # Phase 5 — User Profiles, Moderation & Polish
 
+> **Status:** complete. This file is the plan this phase was built from. It is kept as a
+> record of why the code looks the way it does, and as a template for planning similar work.
+> Where it disagrees with the code, `SPEC.md`, `DECISIONS.md` or [DESIGN.md](../DESIGN.md), those win.
+>
+> **Changed since:** Production config is `config/production.yaml`, copied from `config/production.example.yaml`. Rate limiting is keyed on the socket peer with `governor`, and `X-Forwarded-For` is trusted only from `TRUSTED_PROXIES` (ADR-026). DEPLOY.md is the current deployment guide.
+
 **Goal:** Complete user profiles, moderation tools, and production-readiness hardening. This is the final phase before deployment.
 
 **Prerequisites:** Phase 4 complete. Federation working. All tests passing.
@@ -128,9 +134,9 @@ In community posting: check `community_bans` table before allowing post or comme
 ### Task 5.8 — Error pages
 
 Create templates:
-- `views/errors/404.html` — "Page not found"
-- `views/errors/403.html` — "You don't have permission"
-- `views/errors/500.html` — "Something went wrong"
+- `assets/views/errors/404.html` — "Page not found"
+- `assets/views/errors/403.html` — "You don't have permission"
+- `assets/views/errors/500.html` — "Something went wrong"
 
 Register a custom error handler in Axum that renders these templates for the corresponding status codes.
 
@@ -241,7 +247,7 @@ test_full_happy_path()
 - [ ] `DEPLOY.md` written
 - [ ] `cargo check` passes
 - [ ] `cargo test` passes (all tests including new ones)
-- [ ] `cargo clippy -- -D warnings` passes
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt` applied
 
 ---
@@ -256,5 +262,89 @@ The project is complete when:
 4. A remote Lemmy user can post to a Taverna community (via Follow + Create)
 5. All 5 phases' deliverable checklists are complete
 6. `cargo test` passes with zero failures
-7. `cargo clippy -- -D warnings` produces zero warnings
+7. `cargo clippy --all-targets --all-features -- -D warnings` produces zero warnings
 8. The application starts cleanly in production mode
+
+---
+
+## Prompts
+
+Prompts for redoing or extending this phase with an AI coding agent. They work with any
+tool; see [INSTRUCTIONS.md](INSTRUCTIONS.md) for the workflow.
+
+### Implement
+
+```
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_5.md.
+
+Phases 1–4 are complete. Federation works.
+
+Show me a plan before writing any code.
+
+Implement Phase 5: user profiles, follow/unfollow, account settings, moderation
+tools, rate limiting, banned user enforcement, error pages, production config,
+and DEPLOY.md.
+
+New migration m007_bans.rs — show me the migration before applying it.
+Run cargo loco db migrate after I approve.
+
+After completing:
+  cargo fmt && cargo clippy --all-targets --all-features -- -D warnings && cargo test
+
+All must pass with zero errors and zero warnings.
+Verify the Definition of Done at the bottom of docs/ai/PHASE_5.md.
+```
+
+### Review
+
+```
+You are a QA engineer reviewing Phase 5 of the Taverna project.
+
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_5.md.
+
+Verify:
+
+RATE LIMITING
+- Open src/app.rs or wherever tower-governor is configured.
+- Inbox routes must have strict limit (5 req/s, burst 20).
+- POST /login and POST /register must have auth limit (10 req/s, burst 30).
+- Missing limits: MEDIUM.
+
+BANNED USER ENFORCEMENT
+- Open src/initializers/auth_middleware.rs.
+- After loading user from JWT, must check user.is_banned.
+- If banned: clear cookies, return 403.
+- Missing check: MEDIUM.
+
+LOCKED POST ENFORCEMENT
+- Comment form must be hidden in template when is_locked=true.
+- create_comment handler must return 403 for locked posts.
+- If either check is missing: MEDIUM.
+
+COMMUNITY BAN TABLE
+- Verify m007_bans.rs migration exists and is registered in migration/src/lib.rs.
+- Run: cargo loco db migrate (should succeed with no errors).
+
+ERROR PAGES
+- assets/views/errors/404.html, assets/views/errors/403.html, assets/views/errors/500.html all exist.
+- Custom error handler renders these for the right status codes.
+
+DEPLOY.md EXISTS
+- Contains: PostgreSQL extensions setup, environment variables, build command,
+  migration command, Caddy example, admin setup, AGPL-3.0 license note.
+
+PRODUCTION CONFIG
+- config/production.yaml uses <%= get_env(name="BASE_URL") %> and <%= get_env(name="TAVERNA_DOMAIN") %> (env var interpolation).
+- Not hardcoded URLs.
+
+FINAL CHECKS
+Run: cargo fmt -- check
+Run: cargo clippy --all-targets --all-features -- -D warnings
+Run: cargo test
+
+All must produce zero errors and zero warnings.
+
+Verify the Definition of Done checklist at the bottom of docs/ai/PHASE_5.md.
+
+Report CRITICAL / MEDIUM / LOW.
+```

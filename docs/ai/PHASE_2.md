@@ -1,5 +1,11 @@
 # Phase 2 — Authentication & User Model
 
+> **Status:** complete. This file is the plan this phase was built from. It is kept as a
+> record of why the code looks the way it does, and as a template for planning similar work.
+> Where it disagrees with the code, `SPEC.md`, `DECISIONS.md` or [DESIGN.md](../DESIGN.md), those win.
+>
+> **Changed since:** Sessions also carry a `kind` claim and use the refresh token (ADR-022). Taverna's settings come from the `settings:` block of the config file into `TavernaConfig` (ADR-025), not from direct environment reads.
+
 **Goal:** Working registration, login, and JWT session management. A user can register, log in, and access protected routes.
 
 **Prerequisites:** Phase 1 complete. `cargo check` passes. Migrations applied. Entities generated.
@@ -125,19 +131,19 @@ async fn create_post(
 
 Create minimal but functional templates:
 
-**views/auth/login.html:**
+**assets/views/auth/login.html:**
 - Extends `layouts/base.html`
 - Email input, password input, submit button
 - Show error message if present
 - Link to register page
 
-**views/auth/register.html:**
+**assets/views/auth/register.html:**
 - Extends `layouts/base.html`
 - Username, email, password, password_confirm inputs
 - Show field-level errors
 - Link to login page
 
-**views/layouts/base.html:**
+**assets/views/layouts/base.html:**
 - HTML5 boilerplate
 - Load HTMX from assets/static/htmx.min.js
 - Navigation bar: logo, "Communities", login/register links (or username if logged in)
@@ -185,9 +191,9 @@ async fn test_user_has_keypair_after_create() { /* ... */ }
 - [ ] `src/common/jwt.rs` with create and verify functions
 - [ ] `src/controllers/auth.rs` with all 5 handlers
 - [ ] `src/initializers/auth_middleware.rs` with `AuthUser` and `OptionalAuthUser`
-- [ ] `views/auth/login.html`
-- [ ] `views/auth/register.html`
-- [ ] `views/layouts/base.html`
+- [ ] `assets/views/auth/login.html`
+- [ ] `assets/views/auth/register.html`
+- [ ] `assets/views/layouts/base.html`
 - [ ] Routes registered in `src/app.rs`
 - [ ] `cargo check` passes
 - [ ] `cargo test` passes (auth tests)
@@ -201,3 +207,74 @@ async fn test_user_has_keypair_after_create() { /* ... */ }
 - **DO NOT** reveal which field was wrong on failed login (security)
 - **DO NOT** skip keypair generation for local users — federation requires it
 - **DO NOT** use `| safe` on user input in templates
+
+---
+
+## Prompts
+
+Prompts for redoing or extending this phase with an AI coding agent. They work with any
+tool; see [INSTRUCTIONS.md](INSTRUCTIONS.md) for the workflow.
+
+### Implement
+
+```
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_2.md.
+
+Phase 1 is complete. The database has been migrated and SeaORM entities
+are in src/models/_entities/.
+
+Show me a plan before writing any code.
+
+Implement everything in PHASE_2.md.
+
+Critical: use generate_actor_keypair() from the activitypub_federation crate for
+keypair generation — do NOT use the rsa crate directly. Set up FederationConfig
+and FederationMiddleware in app.rs as in Task 2.6.
+
+Verify the Phase 2 deliverables checklist when done.
+```
+
+Gate:
+```bash
+cargo check && cargo test
+```
+
+### Review
+
+```
+You are a QA engineer reviewing Phase 2 of the Taverna project.
+
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_2.md.
+
+Verify:
+
+KEYPAIR GENERATION
+- Open src/models/users.rs. The generate_keypair() method must call
+  generate_actor_keypair() from the activitypub_federation crate.
+- Search for "use rsa::" in src/. If found: CRITICAL — wrong crate.
+
+PASSWORD HASHING
+- Find where passwords are hashed. Must use argon2id via the argon2 crate.
+- If bcrypt, md5, sha256, or plaintext: CRITICAL.
+
+LOGIN ERROR MESSAGES
+- Open src/controllers/auth.rs, POST /login handler.
+- The error response must NOT say "email not found" or "wrong password".
+- Acceptable: "Invalid credentials" or similar. MEDIUM if it reveals which field failed.
+
+JWT
+- Access token expires in 1 hour. Refresh token expires in 7 days.
+- Both stored in httpOnly cookies. If stored elsewhere: CRITICAL.
+
+FEDERATION SETUP
+- Open src/app.rs. FederationConfig must be built and FederationMiddleware applied.
+- If missing: CRITICAL (Phase 4 will fail at runtime).
+
+LOCAL USER FLAGS
+- New local users must have: is_local=true, last_fetched_at=None.
+
+Run: cargo check
+Run: cargo test
+
+Report CRITICAL / MEDIUM / LOW.
+```

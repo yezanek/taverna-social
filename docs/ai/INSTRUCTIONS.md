@@ -1,265 +1,289 @@
-# Taverna
+# Working on Taverna with AI coding agents
 
-> Full architecture, specification, and AI build plan designed by [Claude](https://claude.ai) (Anthropic).
+Taverna was planned and built with AI coding agents, and is still developed
+that way. This file explains how: which files an agent reads, the workflow
+for a change, the checks every change must pass, and prompts you can reuse.
 
-A self-hostable, federated community platform — Facebook Groups meets old Reddit, built in Rust and part of the Fediverse.
-
-- **Multi-community** per instance (like Lemmy / Reddit)
-- **Federated** with Lemmy instances and Mastodon users via ActivityPub
-- **Text and links only** in v1 — no media uploads
-- **Three themes** — light, dark, sepia — no JavaScript required
-- **Single binary** — PostgreSQL is the only external dependency
-
-**License:** AGPL-3.0 (required by the `activitypub_federation` dependency)
+Everything here works with any agent that can read the repository and run
+shell commands (Claude Code, opencode, gemini-cli, Codex, Cursor, Aider, …).
+Nothing depends on one tool's slash commands or config folders.
 
 ---
 
-## Tech Stack
+## The files
 
-| Layer | Technology |
-|---|---|
-| Language | Rust |
-| Web framework | Loco (Axum) |
-| Database | PostgreSQL 16 (data, delivery queue and federation cache) |
-| Templates | Tera (Jinja2 syntax) |
-| Frontend | HTMX — no JS framework |
-| ActivityPub | `activitypub_federation` 0.7 by LemmyNet |
-
----
-
-## Repository Layout
-
-```
-taverna-social/                 ← git repo root
-├── README.md                   ← your project README (not this file)
-├── AGENTS.md                   ← coding rules; auto-loaded by AI tools at startup
-├── docs/
-│   └── ai/                     ← all AI planning and instruction files
-│       ├── INSTRUCTIONS.md     ← you are here
-│       ├── SPEC.md             ← full technical specification (authoritative)
-│       ├── DECISIONS.md        ← architecture decision log
-│       ├── PHASE_1.md          ← scaffold & database
-│       ├── PHASE_2.md          ← authentication
-│       ├── PHASE_3.md          ← communities, posts, theme switcher
-│       ├── PHASE_4.md          ← ActivityPub federation
-│       ├── PHASE_5.md          ← profiles, moderation, production
-│       ├── PHASE_6.md          ← admin onboarding, email verification, eligibility
-│       ├── PHASE_7.md          ← bug fixes & UX improvements
-│       ├── PHASE_8.md          ← performance, scalability & federated content isolation
-│       ├── OPENCODE_PROMPTS.md ← prompts to paste into opencode (implementor)
-│       ├── GEMINI_PROMPTS.md   ← prompts to paste into gemini-cli (QA)
-│       └── taverna_design.docx ← full architecture design document
-├── .opencode/
-│   └── commands/               ← opencode slash commands (auto-loaded by opencode)
-│       ├── implement-phase.md
-│       ├── implement-theme.md
-│       ├── implement-federation.md
-│       ├── fix-issue.md
-│       └── fix-clippy.md
-├── .github/
-│   ├── pull_request_template.md
-│   ├── deny.toml
-│   └── workflows/
-│       ├── ci.yml
-│       ├── pr-checks.yml
-│       ├── version-bump.yml
-│       └── dependencies.yml
-│
-│   ← Rust project files, scaffolded by opencode in Phase 1:
-├── Cargo.toml
-├── Cargo.lock
-├── config/
-├── migration/
-├── src/
-└── assets/
-```
-
----
-
-## Building with AI Tools
-
-This project is designed to be implemented by **opencode** (writer) and reviewed by **gemini-cli** (QA). The phase files break the work into five sequential stages, each with a deliverables checklist and a gate (`cargo check && cargo test`) before proceeding.
-
-### Tools
-
-| Tool | Role | Reads automatically |
+| File | What it is | Who reads it |
 |---|---|---|
-| opencode | Implements code | `AGENTS.md` (root), `.opencode/commands/*.md` |
-| gemini-cli | QA and review | `AGENTS.md` (root) |
-| Both | Reference when told | `docs/ai/SPEC.md`, `docs/ai/PHASE_*.md`, `docs/ai/DECISIONS.md` |
+| [`AGENTS.md`](../../AGENTS.md) | Coding rules, project layout, git conventions | Every agent, first. Many tools load it automatically; for one that looks for another file name (such as `CLAUDE.md` or `GEMINI.md`), point that file at `AGENTS.md` instead of copying it. |
+| [`SPEC.md`](SPEC.md) | The functional and technical specification | Every agent, before changing behaviour |
+| [`DECISIONS.md`](DECISIONS.md) | Architecture decision records (ADR-001 …) | Before changing anything an ADR covers |
+| [`../DESIGN.md`](../DESIGN.md) | How the system is built today | For orientation |
+| [`PHASE_1.md` … `PHASE_8.md`](.) | The plans the project was built from, each with its implementation and review prompts | When redoing or extending that area, or as a template for a new phase |
+| [`REVIEW.md`](REVIEW.md) | Whole-codebase review prompts: targeted checks, final acceptance test, audit | The reviewing agent |
+| [`../CONFIGURATION.md`](../CONFIGURATION.md), [`../../DEPLOY.md`](../../DEPLOY.md) | Every setting; production setup | When touching config or deployment |
 
-`docs/ai/OPENCODE_PROMPTS.md` and `docs/ai/GEMINI_PROMPTS.md` are **your** cheat sheets — prompts you copy and paste into each tool. The tools do not read these files on their own.
+All eight phases are complete. The phase files are kept as a record and as
+templates; where one disagrees with the code, the code, SPEC.md, DECISIONS.md
+and DESIGN.md win. Each phase file starts with a note on what has changed
+since it was written.
 
-### Workflow per phase
+---
 
+## Roles
+
+Work is split between two roles. They can be two different tools, or the same
+tool in two separate sessions; what matters is that the reviewer did not write
+the code it reviews.
+
+| Role | Does | Reads |
+|---|---|---|
+| **Implementer** | Plans and writes the change, runs the gate | AGENTS.md, SPEC.md, the relevant phase file or issue |
+| **Reviewer** | Checks the change against the spec and the rules, reports findings | AGENTS.md, SPEC.md, the phase file's review prompt or REVIEW.md |
+
+You (the human) approve the plan, decide on findings, and merge.
+
+---
+
+## Workflow for a change
+
+1. **Branch.** Create a branch with a semantic name (see
+   [Branches and pull requests](#branches-and-pull-requests)) from `master`.
+2. **Plan.** Ask the implementer for a plan before any code: every file it
+   will create or change and why, and any commands it will run. Approve or
+   correct it.
+3. **Implement.** The implementer works task by task and runs `cargo check`
+   after each one.
+4. **Gate.** Run the checks below. All must pass.
+5. **Review.** Start the reviewer in a fresh session with the phase's review
+   prompt, or a prompt from REVIEW.md.
+6. **Fix.** Give the findings to the implementer with the "Fix a reported
+   issue" prompt below. Re-run the gate.
+7. **Pull request.** Push and open a PR with a semantic title, filling in
+   `.github/pull_request_template.md`. CI and CodeRabbit run on it. Merge when
+   CI is green and no CRITICAL findings remain.
+8. **Record.** If the change makes a design decision, add an ADR to
+   DECISIONS.md. If it changes behaviour or settings, update SPEC.md,
+   DESIGN.md, README, CONFIGURATION.md or DEPLOY.md as needed.
+
+### The gate
+
+These are the same checks CI runs:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
 ```
-1. Open `docs/ai/OPENCODE_PROMPTS.md` → copy the phase prompt → paste into opencode
-2. opencode shows a plan → you approve → it implements
-3. Run the gate: cargo check && cargo test && cargo clippy -- -D warnings
-4. Open `docs/ai/GEMINI_PROMPTS.md` → copy the phase QA prompt → paste into gemini-cli
-5. gemini-cli reports issues → copy findings → paste into opencode with /project:fix-issue
-6. Re-run the gate → proceed to next phase
-```
 
-### opencode slash commands
+Tests need PostgreSQL 16 and a test database (see "Development setup").
+Never delete or skip a test to make the gate pass; fix the code.
 
-Inside opencode, these commands are available once you open the project directory:
+---
 
-```
-/project:implement-phase 1      implement a full phase (shows plan first)
-/project:implement-theme        implement the theme switcher specifically
-/project:implement-federation   implement the AP federation layer specifically
-/project:fix-issue "..."        fix a specific issue reported by gemini-cli
-/project:fix-clippy             clean up all lint warnings (shows plan first)
+## Branches and pull requests
+
+Always use semantic names. Never use generic names such as `patch-1`,
+`update`, `fix`, `wip` or a tool's default like `claude/project-thread-1234`
+or `opencode/session-5`.
+
+**Branches:** `<type>/<short-kebab-case-summary>`, for example
+`feat/community-bans`, `fix/safari-export-button`,
+`chore/remove-ai-tool-leftovers`, `docs/design-document`.
+
+**Pull request titles:** a conventional commit, `<type>: <summary>` in the
+imperative, for example `fix: key rate limits on the socket peer`. CI's
+PR Title check rejects other titles.
+
+**Commit messages:** the same `<type>: <summary>` form.
+
+`<type>` is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`,
+matching the PR template. Pick the type of the main change; a branch holds
+one change.
+
+---
+
+## Development setup
+
+See the [README](../../README.md) for the full guide. In short:
+
+1. **Rust** stable, 1.85 or newer (edition 2024):
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+2. **PostgreSQL 16** with the contrib extensions (`uuid-ossp`, `ltree`). On
+   Debian or Ubuntu releases that ship an older version, add the PGDG apt
+   repository from postgresql.org. Then:
+   ```bash
+   sudo -u postgres createuser --superuser "$USER"
+   createdb taverna_development
+   createdb taverna_test
+   ```
+   pgmq is **not** needed (ADR-021).
+3. **No extra CLI.** `cargo loco` is an alias for `cargo run --` (see
+   `.cargo/config.toml`). Install `loco-cli` or `sea-orm-cli` only if you want
+   Loco's generators or `sea-orm-cli generate entity`.
+4. **Your agent.** Install it as its documentation says, and start it in the
+   repository root so it sees `AGENTS.md`.
+
+To keep `target/` small, which matters on small disks and CI runners:
+
+```bash
+export CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_INCREMENTAL=0
 ```
 
 ---
 
-## Prerequisites (LMDE / Debian)
+## Reusable prompts
 
-### Rust
+Paste these into the implementer. Replace the parts in `[brackets]`.
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
+### Implement a phase or feature
+
+```
+You are implementing [Phase N / the feature described in issue #N] of Taverna.
+
+Step 1: read these files completely before writing any code:
+1. AGENTS.md: coding rules, project layout, git conventions
+2. docs/ai/SPEC.md: the specification
+3. [docs/ai/PHASE_N.md / the issue]: the tasks and deliverables
+4. docs/ai/DECISIONS.md entries that cover the area you will touch
+
+Step 2: show me a complete plan:
+- every file you will CREATE, with one line on what goes in it
+- every file you will MODIFY, with one line on what changes
+- any commands you will run (migrations, code generation)
+- the branch name you will use (<type>/<short-kebab-summary>)
+Do not write code or run commands yet. Wait for my approval.
+
+Step 3: after I approve, implement each task in order. Run cargo check after
+each task and fix errors before moving on.
+
+Step 4: when all tasks are done, run the gate:
+  cargo fmt --all
+  cargo clippy --all-targets --all-features -- -D warnings
+  cargo test --all-features
+Fix failures in the code; never delete or skip tests.
+
+Step 5: confirm every item in the deliverables checklist and report anything
+missing.
 ```
 
-### Loco and SeaORM CLIs
+### Fix a reported issue
 
-```bash
-cargo install loco-cli sea-orm-cli
+```
+A review reported the following issue:
+
+[paste the finding]
+
+Before changing anything:
+1. Read AGENTS.md and the relevant part of docs/ai/SPEC.md to work out the
+   correct behaviour.
+2. Find the code involved.
+3. Show me a plan: exactly what you will change and why. If you think the
+   finding is wrong, say so and show the evidence instead.
+
+Wait for my approval, then fix it, add or update a test that would have caught
+it, run the gate, and report what you changed.
 ```
 
-Optional: `cargo loco` is already an alias for `cargo run --` in this repo,
-so these are only needed for Loco generators and
-`sea-orm-cli generate entity`.
+### Clean up lint warnings
 
-### PostgreSQL 16
+```
+Run cargo clippy --all-targets --all-features -- -D warnings and capture the
+full output. Group the warnings into auto-fixable and manual. Show me a plan
+with, for each warning, the file, line, issue and proposed fix. Wait for my
+approval.
 
-LMDE ships an older PostgreSQL. Add the official PGDG apt repository to get 16:
-
-```bash
-sudo apt install -y curl ca-certificates
-sudo install -d /usr/share/postgresql-common/pgdg
-sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-  --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
-sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
-  https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-  > /etc/apt/sources.list.d/pgdg.list'
-sudo apt update && sudo apt install -y postgresql-16
-sudo systemctl enable --now postgresql
+Then run cargo clippy --fix --allow-dirty, fix the rest by hand, and run the
+gate again. Report the result.
 ```
 
-Create the development database:
+### Areas that need extra care
 
-```bash
-sudo -u postgres createuser --superuser $USER
-createdb taverna_development
-createdb taverna_test
+When a change touches one of these, add the matching lines to the prompt.
+
+**Themes and templates**
+```
+Read SPEC.md Section 3.5 first. Colours come only from the CSS custom
+properties in assets/static/theme.css (var(--...)); no hard-coded colours in
+templates. The theme comes from the taverna_theme cookie and is injected by
+the Views extractor (ADR-027); <html> carries data-theme="{{ theme }}". Every
+form must work without JavaScript. HTMX endpoints return fragments only.
 ```
 
-### pgmq (no longer needed)
-
-Earlier plans used the pgmq extension as a job queue. The code never used it
-and delivery now runs from the `outbound_activities` table (ADR-021), so you
-do not need to build or install pgmq.
-
-### opencode
-
-```bash
-curl -fsSL https://opencode.ai/install | bash
+**Federation**
+```
+Read SPEC.md Section 6 and the ADRs it cites first. The activitypub_federation
+crate does HTTP signatures, actor fetching, WebFinger helpers and SSRF
+protection: do not reimplement any of them or call reqwest directly. Build
+outbound activities in federation::outbound and only enqueue them from
+handlers (ADR-019, ADR-023). Every ActivityHandler::receive must be idempotent,
+every Object::verify must call verify_domains_match, remote content goes only
+into the remote_* tables (ADR-017), and a community that receives a Create
+must Announce it to its followers.
 ```
 
-### gemini-cli
-
-gemini-cli requires Node.js:
-
-```bash
-sudo apt install -y nodejs npm
-npm install -g @google/gemini-cli
-gemini auth
+**Database**
+```
+Add a new migration; never edit one that has shipped. Implement both up and
+down, register it in migration/src/lib.rs, use UUID keys and TIMESTAMPTZ,
+add the indexes the queries need, and regenerate the entities in
+src/models/_entities/. Use keyset pagination, never OFFSET (ADR-018).
 ```
 
 ---
 
-### Alternative: Homebrew on Linux
+## Recovery prompts
 
-If you prefer Linuxbrew for managing dev tools independently of apt:
+Use these when an agent goes off track.
 
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> ~/.bashrc
-source ~/.bashrc
-
-brew install node
-npm install -g @google/gemini-cli
-# opencode via brew if packaged, otherwise use the curl installer above
+**It starts writing files before showing a plan:**
+```
+Stop. Before making any more changes, show me a complete plan: every file you
+will create, and every file you will modify and what will change. Wait for my
+approval before continuing.
 ```
 
-### Alternative: Nix with home-manager
-
-If you want reproducible tool versions without touching system packages:
-
-```bash
-# Install Nix (standalone, does not require NixOS)
-sh <(curl -L https://nixos.org/nix/install) --daemon
-
-# Install home-manager
-nix-channel --add https://github.com/nix-community/home-manager/archive/master.tar.gz home-manager
-nix-channel --update
-nix-shell '<home-manager>' -A install
+**It hand-rolls HTTP signatures or uses rsa/sha2/base64 in federation code:**
+```
+Do not implement HTTP signatures or key handling yourself. The
+activitypub_federation crate does this: outbound requests are signed when the
+delivery worker sends them, inbound ones are verified by receive_activity(),
+and keys come from generate_actor_keypair(). Remove the manual code and use
+the crate's API.
 ```
 
-Add to `~/.config/home-manager/home.nix`:
-
-```nix
-{ config, pkgs, ... }:
-{
-  home.packages = with pkgs; [
-    rustup
-    nodejs_22
-    opencode      # if packaged; otherwise use the curl installer
-  ];
-}
+**The Announce pattern is missing:**
+```
+When a community inbox receives Create for a post, the community actor must
+also send Announce{Create} to all its followers. Without it, remote Lemmy
+followers never see the post. Add it, queued through federation::outbound.
 ```
 
-```bash
-home-manager switch
-cargo install loco-cli sea-orm-cli   # still needed via cargo
-npm install -g @google/gemini-cli
+**The theme does not apply:**
+```
+Check that (1) base.html has data-theme="{{ theme }}" on <html>, (2) the theme
+middleware is in the stack in src/app.rs, (3) the handler renders through the
+Views extractor so the theme is in the context, and (4) theme.css is at
+assets/static/theme.css and linked from base.html.
 ```
 
-PostgreSQL itself is best left to the system (`apt`) rather than home-manager, since it needs to run as a daemon and manage data directories.
-
----
-
-## Running Locally (after implementation)
-
-```bash
-cargo loco db migrate
-cargo loco start
-# → http://localhost:3000
+**It hard-codes colours:**
+```
+Do not hard-code colours in templates. Use the CSS custom properties defined in
+assets/static/theme.css, such as var(--bg-primary), var(--text-primary) and
+var(--accent). Replace the hex and rgb values.
 ```
 
-## Running Tests
-
-```bash
-cargo test
-cargo clippy -- -D warnings
-cargo fmt --check
+**It leaves placeholders:**
+```
+[file] contains placeholder code (todo!, unimplemented!, or a stub that returns
+Ok(()) without doing the work). All delivered code must be a real
+implementation. Complete it now.
 ```
 
-## Production Deployment
-
-See `DEPLOY.md` (created during Phase 5) for full instructions including PostgreSQL extension setup, environment variables, and reverse proxy configuration.
-
----
-
-## Federation
-
-Taverna federates as an ActivityPub server compatible with:
-- **Lemmy** — communities subscribe and exchange posts
-- **Mastodon** — users follow profiles and receive posts in their home feed
-
-WebFinger: `/.well-known/webfinger?resource=acct:username@yourdomain`
-NodeInfo: `/nodeinfo/2.0`
+**It uses a generic branch or PR name:**
+```
+Rename the branch to <type>/<short-kebab-summary> describing this change, and
+title the PR "<type>: <summary>", as AGENTS.md requires.
+```

@@ -1,5 +1,11 @@
 # Phase 7 — Bug Fixes & UX Improvements
 
+> **Status:** complete. This file is the plan this phase was built from. It is kept as a
+> record of why the code looks the way it does, and as a template for planning similar work.
+> Where it disagrees with the code, `SPEC.md`, `DECISIONS.md` or [DESIGN.md](../DESIGN.md), those win.
+>
+> **Changed since:** Some UI described here was redesigned later (PR #28); the templates in `assets/views/` are the current UI.
+
 **Goal:** Fix six confirmed bugs and one missing feature discovered during early
 use. All issues are self-contained — no new database tables, no federation
 changes. This phase is purely UI, routing, and logic corrections.
@@ -37,7 +43,7 @@ adjustments:
 - Still load `theme.css` and apply `data-theme` from the cookie (default `light`
   if no cookie is set yet)
 
-Change `views/setup/wizard.html` to extend `base.html`:
+Change `assets/views/setup/wizard.html` to extend `base.html`:
 
 ```html
 {% extends "layouts/base.html" %}
@@ -55,7 +61,7 @@ Change `views/setup/wizard.html` to extend `base.html`:
 {% endblock %}
 ```
 
-Update `views/layouts/base.html` to conditionally hide the nav:
+Update `assets/views/layouts/base.html` to conditionally hide the nav:
 
 ```html
 {% if not hide_nav %}
@@ -89,7 +95,7 @@ let communities = CommunityModel::list_all(&ctx.db, page, PER_PAGE).await?;
 // Render even if communities is empty
 ```
 
-In `views/communities/list.html` (create this if it does not exist), handle the
+In `assets/views/communities/list.html` (create this if it does not exist), handle the
 empty case explicitly:
 
 ```html
@@ -125,9 +131,9 @@ GET  /c/new    → new_community_form handler
 POST /c/       → create_community handler
 ```
 
-If the routes exist but the form is broken or missing, fix `views/communities/new.html`.
+If the routes exist but the form is broken or missing, fix `assets/views/communities/new.html`.
 
-**Nav link** — add to `views/layouts/base.html`, visible to all logged-in users
+**Nav link** — add to `assets/views/layouts/base.html`, visible to all logged-in users
 (subject to eligibility check in Phase 6, but the link itself always shows):
 
 ```html
@@ -136,7 +142,7 @@ If the routes exist but the form is broken or missing, fix `views/communities/ne
 {% endif %}
 ```
 
-**`views/communities/new.html`:**
+**`assets/views/communities/new.html`:**
 
 ```html
 {% extends "layouts/base.html" %}
@@ -213,7 +219,7 @@ or `url`, but the UI gives no guidance.
 
 **Fix:**
 
-Update `views/communities/new_post.html` (or wherever the new post form lives)
+Update `assets/views/communities/new_post.html` (or wherever the new post form lives)
 to add a two-tab selector at the top of the form, similar to Reddit's approach:
 
 ```html
@@ -279,7 +285,7 @@ optional fields. No changes needed in Rust — only the template.
 
 **Fix:**
 
-In `views/partials/post_card.html`, wrap the post title in an anchor tag:
+In `assets/views/partials/post_card.html`, wrap the post title in an anchor tag:
 
 ```html
 <!-- Before (broken): -->
@@ -292,7 +298,7 @@ In `views/partials/post_card.html`, wrap the post title in an anchor tag:
 </a>
 ```
 
-Also check `views/communities/feed.html` — if it renders post titles directly
+Also check `assets/views/communities/feed.html` — if it renders post titles directly
 rather than using the `post_card` partial, fix it there too.
 
 Verify the route `GET /c/:slug/posts/:id` is registered in `src/app.rs` and
@@ -310,7 +316,7 @@ their username cannot log in without knowing their email.
 
 **Fix:**
 
-Update the login form in `views/auth/login.html`:
+Update the login form in `assets/views/auth/login.html`:
 
 ```html
 <!-- Change the label and input -->
@@ -361,7 +367,7 @@ let users = UserModel::list_all_local(&ctx.db, user_page, PER_PAGE).await?;
 let communities = CommunityModel::list_all(&ctx.db, community_page, PER_PAGE).await?;
 ```
 
-Update `views/admin/dashboard.html` to add a communities section below the
+Update `assets/views/admin/dashboard.html` to add a communities section below the
 users section:
 
 ```html
@@ -433,7 +439,7 @@ even when logged in as an admin. Admins must navigate to `/admin` manually.
 
 **Fix:**
 
-In `views/layouts/base.html`, add an admin link visible only to admin users:
+In `assets/views/layouts/base.html`, add an admin link visible only to admin users:
 
 ```html
 {% if current_user %}
@@ -541,7 +547,7 @@ test_setup_page_uses_base_layout()
 - [ ] Admin nav link not visible to non-admin users
 - [ ] New tests added to their semantic test files (auth_test.rs, community_test.rs, post_test.rs, admin_test.rs, setup_test.rs)
 - [ ] `cargo test` passes
-- [ ] `cargo check`, `cargo clippy -- -D warnings`, `cargo fmt` all pass
+- [ ] `cargo check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt` all pass
 
 ---
 
@@ -558,3 +564,143 @@ test_setup_page_uses_base_layout()
   `post_card` partial context — the title link needs the slug
 - DO NOT add member_count and post_count as permanent columns on the communities
   table — compute them in the admin query only
+
+---
+
+## Prompts
+
+Prompts for redoing or extending this phase with an AI coding agent. They work with any
+tool; see [INSTRUCTIONS.md](INSTRUCTIONS.md) for the workflow.
+
+### Implement
+
+```
+Read AGENTS.md and docs/ai/PHASE_7.md.
+
+Phases 1–6 are complete. This phase fixes confirmed bugs and missing features
+found during early use. No new database tables. No federation changes.
+
+Show me a plan before writing any code.
+
+Work through the tasks in order. After each task run cargo check.
+
+Task 7.1 — Setup wizard styling
+  Extend base.html, pass hide_nav=true into context. Do NOT create a new layout.
+
+Task 7.2 — Empty communities list
+  list_all must return Ok(vec![]) not an error. Template must render an
+  empty-state message with a link to /c/new for logged-in users.
+
+Task 7.3 — New community page and nav link
+  Verify GET /c/new and POST /c/ routes are registered.
+  Add "+ New Community" link to base.html nav (logged-in users only).
+  Run eligibility check in the GET handler; pass eligible + reasons to template.
+
+Task 7.4 — Post type selector
+  Template change only — Text/Link tab using radio buttons.
+  The form must work without JavaScript (both fields present in DOM always).
+  No Rust changes needed.
+
+Task 7.5 — Post title link
+  Wrap post title in <a href="/c/{{ community.slug }}/posts/{{ post.id }}">.
+  Verify the route GET /c/:slug/posts/:id is registered and returns 200.
+
+Task 7.6 — Login by username or email
+  Change form field from email to identifier.
+  Handler: if identifier contains @ treat as email, else treat as username.
+  Error message must remain generic — never reveal which field was wrong.
+
+Task 7.7 — Admin communities table
+  Query communities with member_count and post_count computed in SQL.
+  Do NOT add these as permanent columns — compute in the admin query only.
+
+Task 7.9 — Admin nav link
+  Add ⚙ Admin link in base.html nav, inside {% if current_user.is_admin %}.
+  Verify current_user.is_admin is available in the Tera context.
+
+Task 7.8 — Tests
+  Add tests to their semantic files — do NOT create tests/phase7_test.rs.
+  auth_test.rs: test_login_with_username, test_login_with_email_still_works
+  community_test.rs: test_communities_list_empty_state, test_new_community_page_renders
+  post_test.rs: test_new_post_has_type_selector, test_post_title_is_a_link, test_post_detail_page_accessible
+  admin_test.rs: test_admin_dashboard_shows_communities, test_admin_link_visible_for_admin, test_admin_link_hidden_for_regular_user
+  setup_test.rs: test_setup_page_uses_base_layout
+
+After all tasks:
+  cargo fmt && cargo clippy --all-targets --all-features -- -D warnings && cargo test
+
+Verify the Phase 7 deliverables checklist when done.
+```
+
+### Review
+
+```
+You are a QA engineer reviewing Phase 7 of the Taverna project.
+
+Read AGENTS.md and docs/ai/PHASE_7.md.
+
+Verify each fix:
+
+TASK 7.1 — Setup wizard styling
+- GET /setup response body must contain data-theme= attribute on the <html> element.
+- Response must contain <link rel="stylesheet" href="/static/theme.css">.
+- Response must NOT contain the nav bar (no <nav> element, or nav is hidden).
+- Must NOT reference a separate plain layout — must extend base.html.
+
+TASK 7.2 — Empty communities list
+- GET /c/ with zero communities in DB must return HTTP 200, not 500 or 404.
+- Response body must contain an empty-state message (e.g. "No communities yet").
+- For logged-in users, must contain a link to /c/new.
+- CommunityModel::list_all must return Ok(vec![]) not Err on empty result.
+
+TASK 7.3 — New community page and nav link
+- GET /c/new as a logged-in eligible user must return 200.
+- Response must contain a form with action="/c/" and fields: slug, name, description.
+- base.html must contain href="/c/new" inside an {% if current_user %} block.
+- Ineligible users seeing GET /c/new must see their eligibility reasons, not a 403.
+
+TASK 7.4 — Post type selector
+- GET /c/:slug/new (new post form) response body must contain:
+    name="post_type" (the radio selector)
+    name="url" (the link field)
+    name="body" (the text field)
+- Both fields must be present in the DOM (not conditionally omitted server-side).
+- Minimal onchange JS for cosmetic toggling is acceptable; core form must work
+  without JavaScript.
+
+TASK 7.5 — Post title links
+- GET /c/:slug feed response must contain:
+    <a href="/c/{slug}/posts/{id}"> wrapping the post title
+  for each post in the feed.
+- If post_card.html is a partial, check there too.
+- GET /c/:slug/posts/:id must return 200 for an existing post.
+- Route must be registered in src/app.rs.
+
+TASK 7.6 — Login by username or email
+- Login form must have input name="identifier", not name="email".
+- POST /login with a username (no @) must authenticate successfully.
+- POST /login with an email address must still authenticate successfully.
+- Failed login must return a generic error message — not "user not found"
+  or "wrong password" separately.
+- Check src/controllers/auth.rs: identifier containing @ → find_by_email,
+  otherwise → find_by_username.
+
+TASK 7.9 — Admin nav link
+- GET / as admin user response body must contain href="/admin".
+- GET / as non-admin user response body must NOT contain href="/admin".
+- The admin link must be inside a {% if current_user.is_admin %} block in base.html.
+
+TASK 7.7 — Admin communities table
+- GET /admin as admin must return a table containing community data.
+- Table must include columns for: slug, name, member count, post count.
+- member_count and post_count must NOT be permanent columns on the
+  communities table — verify by checking migrations and the SeaORM entity.
+- Delete button must exist per community row.
+
+Run: cargo test
+Tests must be in their semantic files: auth_test.rs, community_test.rs,
+post_test.rs, admin_test.rs, setup_test.rs — not a monolithic phase7_test.rs.
+Report any failing tests as CRITICAL.
+
+Report CRITICAL / MEDIUM / LOW.
+```
