@@ -174,17 +174,17 @@ mod tests {
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
         let mut map = HeaderMap::new();
         for (name, value) in pairs {
-            map.append(*name, value.parse().unwrap());
+            map.append(*name, value.parse().expect("valid header value"));
         }
         map
     }
 
     fn ip(s: &str) -> IpAddr {
-        s.parse().unwrap()
+        s.parse().expect("valid IP literal")
     }
 
     fn trusted() -> Vec<IpNet> {
-        parse_trusted_proxies(&["127.0.0.1".into(), "10.0.0.0/8".into()]).unwrap()
+        parse_trusted_proxies(&["127.0.0.1".into(), "10.0.0.0/8".into()]).expect("valid proxies")
     }
 
     #[test]
