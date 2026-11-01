@@ -19,6 +19,9 @@
         <button type="submit" class="btn">Join</button>
       </form>
     {% endif %}
+    {% if can_moderate %}
+      <a href="/c/{{ community.slug }}/settings" class="btn" style="margin-left:0.5rem">Settings</a>
+    {% endif %}
   </div>
 </div>
 

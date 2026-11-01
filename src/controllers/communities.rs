@@ -102,13 +102,13 @@ pub async fn feed(
         RenderMode::Html => {}
     }
 
-    let is_member = if let Some(ref user) = current_user {
-        CommunityModel::get_member_role(&ctx.db, community.id, user.id)
-            .await?
-            .is_some()
-    } else {
-        false
+    let role = match current_user {
+        Some(ref user) => CommunityModel::get_member_role(&ctx.db, community.id, user.id).await?,
+        None => None,
     };
+    let is_member = role.is_some();
+    let can_moderate =
+        role.as_deref() == Some("moderator") || current_user.as_ref().is_some_and(|u| u.is_admin);
 
     let posts =
         feed::community_feed(&ctx.db, community.id, page.cursor().as_ref(), PER_PAGE).await?;
@@ -127,6 +127,7 @@ pub async fn feed(
             "community": community,
             "description_rendered": description_rendered,
             "is_member": is_member,
+            "can_moderate": can_moderate,
             "posts": posts.items,
             "next_cursor": posts.next_cursor,
             "csrf_token": csrf_token,
@@ -389,12 +390,39 @@ pub async fn settings_form(
         return Err(forbidden("Moderator access required"));
     }
 
+    render_settings(&views, &ctx.db, jar, &community, &current_user, None).await
+}
+
+/// Renders the settings page, with the community's bans and an optional
+/// error from the ban form.
+async fn render_settings(
+    views: &Views,
+    db: &DatabaseConnection,
+    jar: CookieJar,
+    community: &crate::models::_entities::communities::Model,
+    current_user: &crate::models::_entities::users::Model,
+    ban_error: Option<&str>,
+) -> Result<Response> {
+    let bans: Vec<_> = CommunityBansEntity::list_for_community(db, community.id)
+        .await?
+        .into_iter()
+        .map(|(ban, username)| {
+            json!({
+                "username": username,
+                "reason": ban.reason,
+                "created_at": ban.created_at,
+            })
+        })
+        .collect();
+
     let (csrf_token, csrf_cookie) = csrf::issue();
     let response = views.render(
         "communities/settings.html",
         json!({
             "current_user": current_user,
             "community": community,
+            "bans": bans,
+            "ban_error": ban_error,
             "csrf_token": csrf_token,
         }),
     )?;
@@ -441,16 +469,27 @@ pub async fn update_settings(
     Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
 }
 
-/// Bans a user from the community (moderator only).
-#[instrument(skip(ctx, jar, headers, taverna, form))]
+/// Form data for banning a user from the community settings page.
+#[derive(Debug, Deserialize)]
+pub struct BanForm {
+    pub username: String,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
+}
+
+/// Bans a user from the community (moderator only). `POST /c/{slug}/bans`.
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(views, ctx, jar, headers, taverna, form))]
 pub async fn ban_user(
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
     Extension(taverna): Extension<TavernaConfig>,
     headers: HeaderMap,
-    Path((slug, username)): Path<(String, String)>,
-    Form(form): Form<CsrfForm>,
+    Path(slug): Path<String>,
+    Form(form): Form<BanForm>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
         .await?
@@ -466,17 +505,36 @@ pub async fn ban_user(
         return Err(invalid_csrf());
     }
 
-    let target = UserModel::find_by_username(&ctx.db, &username)
-        .await?
-        .ok_or_else(|| Error::NotFound)?;
+    let username = form.username.trim().trim_start_matches('@');
+    let Some(target) = UserModel::find_by_username(&ctx.db, username).await? else {
+        let error = format!("No user named '{username}'");
+        return render_settings(
+            &views,
+            &ctx.db,
+            jar,
+            &community,
+            &current_user,
+            Some(&error),
+        )
+        .await;
+    };
+    if target.id == current_user.id {
+        let error = "You can't ban yourself";
+        return render_settings(&views, &ctx.db, jar, &community, &current_user, Some(error)).await;
+    }
 
-    CommunityBansEntity::create_ban(&ctx.db, community.id, target.id, current_user.id, None)
+    let reason = form
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty());
+    CommunityBansEntity::create_ban(&ctx.db, community.id, target.id, current_user.id, reason)
         .await?;
 
     Ok(format::redirect(&format!("/c/{}/settings", slug)).into_response())
 }
 
-/// Unbans a user from the community (moderator only).
+/// Lifts a ban (moderator only). `POST /c/{slug}/bans/{username}/delete`.
 #[instrument(skip(ctx, jar, headers, taverna, form))]
 pub async fn unban_user(
     State(ctx): State<AppContext>,
