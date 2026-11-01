@@ -15,13 +15,12 @@ use crate::controllers::csrf::{self, CsrfForm};
 use crate::federation::{self, outbound, traits::DbCommunity};
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
-use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::communities::CommunityModel;
 use crate::models::community_bans::Entity as CommunityBansEntity;
 use crate::models::feed::{self, CursorQuery};
 use crate::models::posts::{PostError, PostModel};
 use crate::models::users::UserModel;
-use crate::views::helpers;
+use crate::views::Views;
 use activitypub_federation::{config::Data, traits::Object};
 use sea_orm::DatabaseConnection;
 
@@ -51,20 +50,18 @@ pub struct CommunitySettingsForm {
 }
 
 /// Lists all communities.
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn list(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
     let communities = CommunityModel::list_all(&ctx.db, page.cursor().as_ref(), PER_PAGE).await?;
 
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "communities/list.html",
         json!({
             "current_user": current_user,
@@ -72,20 +69,18 @@ pub async fn list(
             "next_cursor": communities.next_cursor,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 /// Shows a community's feed (posts) or its ActivityPub actor representation.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, theme, current_user, jar, data))]
+#[instrument(skip(views, ctx, current_user, jar, data))]
 pub async fn feed(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Extension(render_mode): Extension<RenderMode>,
     data: Data<DatabaseConnection>,
     Path(slug): Path<String>,
@@ -125,8 +120,7 @@ pub async fn feed(
         .unwrap_or_default();
 
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "communities/feed.html",
         json!({
             "current_user": current_user,
@@ -137,7 +131,6 @@ pub async fn feed(
             "next_cursor": posts.next_cursor,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
@@ -153,21 +146,19 @@ pub struct CreateCommunityForm {
 }
 
 /// Shows the form to create a new community (with eligibility check).
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn new_community_form(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
     let eligibility =
         crate::models::eligibility::check_eligibility(&ctx.db, current_user.id).await?;
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "communities/new.html",
         json!({
             "current_user": current_user,
@@ -175,7 +166,6 @@ pub async fn new_community_form(
             "eligibility_reasons": eligibility.reasons,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
@@ -219,13 +209,12 @@ pub async fn create_community(
 }
 
 /// Renders the form to create a new post in a community.
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn new_post_form(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Path(slug): Path<String>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
@@ -239,15 +228,13 @@ pub async fn new_post_form(
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "communities/new_post.html",
         json!({
             "current_user": current_user,
             "community": community,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
@@ -384,13 +371,12 @@ pub async fn leave(
 }
 
 /// Renders community settings form (moderator only).
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn settings_form(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Path(slug): Path<String>,
 ) -> Result<Response> {
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
@@ -404,15 +390,13 @@ pub async fn settings_form(
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "communities/settings.html",
         json!({
             "current_user": current_user,
             "community": community,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }

@@ -349,3 +349,13 @@ right past trusted hops to the first untrusted one.
 **Reason:** Trusting the left-most `X-Forwarded-For` entry let any client
 reached directly pick a fresh bucket per request, and requests without the
 header all shared one `127.0.0.1` bucket.
+
+## ADR-027: Handlers render through the `Views` extractor
+
+**Decision:** HTML handlers take `views: crate::views::Views`, an extractor
+that bundles the Tera view engine with the request's `CurrentTheme`, and
+call `views.render(template, data)`. `Views` adds `theme` to every
+template's context, so handlers no longer take `Extension<CurrentTheme>`.
+
+**Reason:** SPEC §3.5 wants the theme available to every template; passing
+it by hand through about 30 handlers was easy to forget and noisy.

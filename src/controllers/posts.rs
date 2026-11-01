@@ -15,7 +15,6 @@ use crate::common::markdown::render_markdown;
 use crate::controllers::csrf::{self, CsrfForm};
 use crate::federation::outbound;
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
-use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::_entities::{comments, communities, posts, users};
 use crate::models::comments::{CommentError, CommentModel};
 use crate::models::communities::CommunityModel;
@@ -24,7 +23,7 @@ use crate::models::posts::{PostError, PostModel};
 use crate::models::remote::RemoteCommentModel;
 use crate::models::users::UserModel;
 use crate::models::votes::{VoteError, VoteModel};
-use crate::views::helpers;
+use crate::views::Views;
 
 /// Form data for editing a post.
 #[derive(Debug, Deserialize)]
@@ -154,13 +153,12 @@ async fn federate_vote(
 // ── Handlers ────────────────────────────────────────────────
 
 /// Shows a single post with its comments, author info, and voting UI.
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn detail(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Path((slug, post_id)): Path<(String, Uuid)>,
 ) -> Result<Response> {
     let (community, post) = load_post(&ctx.db, &slug, post_id).await?;
@@ -249,8 +247,7 @@ pub async fn detail(
     };
 
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "communities/post.html",
         json!({
             "current_user": current_user,
@@ -269,16 +266,15 @@ pub async fn detail(
             "can_moderate": can_moderate,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 /// Casts or toggles a vote on a post (upvote/downvote). Returns vote button partial.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, jar, headers, taverna, form))]
+#[instrument(skip(views, ctx, jar, headers, taverna, form))]
 pub async fn vote(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
@@ -313,8 +309,7 @@ pub async fn vote(
 
     let user_vote = VoteModel::get_user_vote_on_post(&ctx.db, current_user.id, post_id).await?;
 
-    helpers::render(
-        &v,
+    views.render(
         "partials/vote_buttons.html",
         json!({
             "target_type": "post",
@@ -330,13 +325,12 @@ pub async fn vote(
 }
 
 /// Renders the edit form for a post (author only).
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn edit_form(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Path((slug, post_id)): Path<(String, Uuid)>,
 ) -> Result<Response> {
     let (community, post) = load_post(&ctx.db, &slug, post_id).await?;
@@ -345,8 +339,7 @@ pub async fn edit_form(
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "communities/edit_post.html",
         json!({
             "current_user": current_user,
@@ -354,7 +347,6 @@ pub async fn edit_form(
             "post": post,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
@@ -494,9 +486,9 @@ pub async fn create_comment(
 
 /// Casts or toggles a vote on a comment. Returns vote button partial.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, jar, headers, taverna, form))]
+#[instrument(skip(views, ctx, jar, headers, taverna, form))]
 pub async fn vote_comment(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
@@ -532,8 +524,7 @@ pub async fn vote_comment(
     let user_vote =
         VoteModel::get_user_vote_on_comment(&ctx.db, current_user.id, comment_id).await?;
 
-    helpers::render(
-        &v,
+    views.render(
         "partials/vote_buttons.html",
         json!({
             "target_type": "comment",
@@ -612,13 +603,12 @@ pub async fn lock(
 }
 
 /// Renders the edit form for a comment (author only).
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn edit_comment_form(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Path((slug, post_id, comment_id)): Path<(String, Uuid, Uuid)>,
 ) -> Result<Response> {
     let (community, post, comment) = load_comment(&ctx.db, &slug, post_id, comment_id).await?;
@@ -627,8 +617,7 @@ pub async fn edit_comment_form(
     }
 
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "communities/edit_comment.html",
         json!({
             "current_user": current_user,
@@ -637,7 +626,6 @@ pub async fn edit_comment_form(
             "comment": comment,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }

@@ -1,4 +1,3 @@
-use axum::Extension;
 use axum::extract::Query;
 use axum_extra::extract::cookie::CookieJar;
 use loco_rs::prelude::*;
@@ -7,20 +6,18 @@ use tracing::instrument;
 
 use crate::controllers::csrf;
 use crate::initializers::auth_middleware::OptionalAuthUser;
-use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::feed::{self, CursorQuery};
-use crate::views::helpers;
+use crate::views::Views;
 
 const PER_PAGE: u64 = 20;
 
 /// Renders the front page: local and remote posts, keyset-paginated.
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn index(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
     let posts = feed::home_feed(&ctx.db, page.cursor().as_ref(), PER_PAGE)
@@ -31,8 +28,7 @@ pub async fn index(
         })?;
 
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "home/index.html",
         json!({
             "current_user": current_user,
@@ -40,7 +36,6 @@ pub async fn index(
             "next_cursor": posts.next_cursor,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }

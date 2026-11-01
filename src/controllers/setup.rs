@@ -11,10 +11,9 @@ use tracing::instrument;
 use crate::common::config::TavernaConfig;
 use crate::controllers::csrf;
 use crate::initializers::first_run::{self, FirstRunState};
-use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::_entities::{instance_settings, users};
 use crate::models::users::{UserError, UserModel};
-use crate::views::helpers;
+use crate::views::Views;
 
 #[derive(Debug, Deserialize)]
 pub struct SetupForm {
@@ -29,12 +28,11 @@ pub struct SetupForm {
     pub csrf_token: Option<String>,
 }
 
-#[instrument(skip(v, ctx, theme, jar))]
+#[instrument(skip(views, ctx, jar))]
 pub async fn wizard_form(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
     let is_first = first_run::is_first_run(&ctx.db).await?;
     if !is_first {
@@ -45,14 +43,12 @@ pub async fn wizard_form(
     }
     let (csrf_token, csrf_cookie) = csrf::issue();
 
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "setup/wizard.html",
         json!({
             "csrf_token": csrf_token,
             "hide_nav": true,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
