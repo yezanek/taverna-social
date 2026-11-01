@@ -20,10 +20,10 @@ A self-hostable, federated community platform — Facebook Groups meets old Redd
 |---|---|
 | Language | Rust |
 | Web framework | Loco (Axum) |
-| Database | PostgreSQL 16 (data + job queue via pgmq) |
+| Database | PostgreSQL 16 (data, delivery queue and federation cache) |
 | Templates | Tera (Jinja2 syntax) |
 | Frontend | HTMX — no JS framework |
-| ActivityPub | `activitypub_federation` 0.6 by LemmyNet |
+| ActivityPub | `activitypub_federation` 0.7 by LemmyNet |
 
 ---
 
@@ -130,6 +130,10 @@ source ~/.cargo/env
 cargo install loco-cli sea-orm-cli
 ```
 
+Optional: `cargo loco` is already an alias for `cargo run --` in this repo,
+so these are only needed for Loco generators and
+`sea-orm-cli generate entity`.
+
 ### PostgreSQL 16
 
 LMDE ships an older PostgreSQL. Add the official PGDG apt repository to get 16:
@@ -154,23 +158,11 @@ createdb taverna_development
 createdb taverna_test
 ```
 
-### pgmq
+### pgmq (no longer needed)
 
-pgmq is a PostgreSQL extension not yet in apt. Build it from source using `pgrx`:
-
-```bash
-# Install build dependencies
-sudo apt install -y build-essential libclang-dev postgresql-server-dev-16
-
-# Install pgrx and build pgmq
-cargo install --locked cargo-pgrx
-cargo pgrx init --pg16 $(which pg_config)
-git clone https://github.com/tembo-io/pgmq.git && cd pgmq
-cargo pgrx install --pg-config $(which pg_config)
-
-# Enable the extension
-psql -d taverna_development -c "CREATE EXTENSION IF NOT EXISTS pgmq;"
-```
+Earlier plans used the pgmq extension as a job queue. The code never used it
+and delivery now runs from the `outbound_activities` table (ADR-021), so you
+do not need to build or install pgmq.
 
 ### opencode
 

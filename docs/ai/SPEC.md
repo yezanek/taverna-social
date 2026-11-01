@@ -26,12 +26,12 @@ A single Taverna instance:
 | Language | Rust | Single binary output |
 | Web framework | Loco (built on Axum) | Rails-like conventions |
 | ORM | SeaORM | Async, works with Loco |
-| Database | PostgreSQL 16 | All data, queue, federation cache |
-| Job queue | pgmq (PostgreSQL extension) | No separate broker |
+| Database | PostgreSQL 16 | All data, delivery queue, federation cache |
+| Job queue | `outbound_activities` table + in-process poller | No separate broker (ADR-021; pgmq is not used) |
 | Templates | Tera (Jinja2 syntax) | Built into Loco |
 | Frontend | HTMX | No JS framework |
 | Markdown | pulldown-cmark + ammonia | Parse + sanitize |
-| ActivityPub | activitypub_federation 0.6 | LemmyNet's crate |
+| ActivityPub | activitypub_federation 0.7 | LemmyNet's crate |
 | Theme | CSS custom properties + cookie | Light / Dark / Sepia, no JS framework |
 
 **There is no Redis. There is no separate message broker. PostgreSQL does everything.**
@@ -242,8 +242,10 @@ settings page.
 ```sql
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS ltree;
-CREATE EXTENSION IF NOT EXISTS pgmq;
 ```
+
+`pgmq` is not required: outbound delivery uses the `outbound_activities`
+table (ADR-021).
 
 ### 4.2 Table: users
 
