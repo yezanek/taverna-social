@@ -474,6 +474,16 @@ mod tests {
     // ── Phase 8: remote content cache ────────────────────────
 
     const REMOTE_ALICE: &str = "https://remote.example/u/alice";
+    const AP_PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
+
+    /// A Note addressed the way Mastodon addresses a direct message (only the
+    /// mentioned actor) or a followers-only post (only the followers URL).
+    fn non_public_note_activity(note_id: &str, to: &str) -> serde_json::Value {
+        let mut activity = create_note_activity(note_id, to);
+        activity["cc"] = serde_json::json!([]);
+        activity["object"]["cc"] = serde_json::json!([]);
+        activity
+    }
 
     async fn insert_remote_actor(
         db: &sea_orm::DatabaseConnection,
@@ -510,13 +520,13 @@ mod tests {
             "id": format!("{note_id}/activity"),
             "actor": REMOTE_ALICE,
             "to": [to],
-            "cc": [],
+            "cc": [AP_PUBLIC],
             "object": {
                 "type": "Note",
                 "id": note_id,
                 "attributedTo": REMOTE_ALICE,
                 "to": [to],
-                "cc": [],
+                "cc": [AP_PUBLIC],
                 "name": "Hello from afar",
                 "content": "Remote body",
                 "published": "2026-10-01T12:00:00Z"
@@ -616,6 +626,126 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn test_incoming_direct_message_is_not_stored() {
+        use sea_orm::{EntityTrait, PaginatorTrait};
+        setup();
+        let boot = crate::common::shared_boot().await;
+        let db = &boot.app_context.db;
+        let user = create_test_user(db).await;
+
+        receive(
+            db,
+            non_public_note_activity("https://remote.example/dm/1", &user.ap_id),
+        )
+        .await;
+        receive(
+            db,
+            non_public_note_activity(
+                "https://remote.example/followers-only/1",
+                &format!("{REMOTE_ALICE}/followers"),
+            ),
+        )
+        .await;
+
+        assert_eq!(
+            taverna::models::_entities::remote_posts::Entity::find()
+                .count(db)
+                .await
+                .unwrap(),
+            0,
+            "DMs and followers-only posts must not be cached"
+        );
+        let feed = taverna::models::feed::home_feed(db, None, 50)
+            .await
+            .unwrap();
+        assert!(
+            feed.items.is_empty(),
+            "non-public notes must not reach the home feed"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_incoming_non_public_reply_is_not_stored() {
+        setup();
+        let boot = crate::common::shared_boot().await;
+        let db = &boot.app_context.db;
+        let user = create_test_user(db).await;
+        let post = PostModel::create(
+            db,
+            None,
+            user.id,
+            "Profile post",
+            Some("body"),
+            None,
+            BASE_URL,
+        )
+        .await
+        .unwrap();
+
+        let mut activity =
+            non_public_note_activity("https://remote.example/dm-reply/1", &user.ap_id);
+        activity["object"]["inReplyTo"] = serde_json::json!(post.ap_id);
+        receive(db, activity).await;
+
+        let replies = taverna::models::remote::RemoteCommentModel::list_for_local_post(db, post.id)
+            .await
+            .unwrap();
+        assert!(
+            replies.is_empty(),
+            "a private reply must not appear under the post"
+        );
+        let post = PostModel::find_by_id(db, post.id).await.unwrap().unwrap();
+        assert_eq!(post.comment_count, 0);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_public_activity_wrapping_private_note_is_not_stored() {
+        use sea_orm::{EntityTrait, PaginatorTrait};
+        setup();
+        let boot = crate::common::shared_boot().await;
+        let db = &boot.app_context.db;
+        let user = create_test_user(db).await;
+
+        // Only the Note's own addressing decides, matching the m011 purge.
+        let mut activity =
+            non_public_note_activity("https://remote.example/dm/wrapped", &user.ap_id);
+        activity["cc"] = serde_json::json!([AP_PUBLIC]);
+        receive(db, activity).await;
+
+        assert_eq!(
+            taverna::models::_entities::remote_posts::Entity::find()
+                .count(db)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_incoming_note_with_compact_public_is_stored() {
+        setup();
+        let boot = crate::common::shared_boot().await;
+        let db = &boot.app_context.db;
+        let user = create_test_user(db).await;
+
+        let note_id = "https://remote.example/post/compact";
+        let mut activity = non_public_note_activity(note_id, &user.ap_id);
+        activity["object"]["to"] = serde_json::json!(["as:Public"]);
+        receive(db, activity).await;
+
+        assert!(
+            taverna::models::remote::RemotePostModel::find(db, note_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_remote_actor_upserted_on_receive() {
         use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
         setup();
@@ -679,7 +809,7 @@ mod tests {
                 "object": {
                     "type": "Note", "id": note_id,
                     "attributedTo": "https://evil.example/u/mallory",
-                    "to": [], "cc": [], "content": "defaced"
+                    "to": [AP_PUBLIC], "cc": [], "content": "defaced"
                 }
             }),
         )
@@ -690,6 +820,52 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(remote.body.as_deref(), Some("Remote body"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_update_to_non_public_removes_cached_copy() {
+        setup();
+        let boot = crate::common::shared_boot().await;
+        let db = &boot.app_context.db;
+        let user = create_test_user(db).await;
+        let community = create_test_community(db, user.id).await;
+        let note_id = "https://remote.example/post/edited-private";
+        receive(db, create_note_activity(note_id, &community.ap_id)).await;
+
+        receive(
+            db,
+            serde_json::json!({
+                "type": "Update",
+                "id": "https://remote.example/updates/private",
+                "actor": REMOTE_ALICE,
+                "to": [], "cc": [],
+                "object": {
+                    "type": "Note", "id": note_id,
+                    "attributedTo": REMOTE_ALICE,
+                    "to": [&user.ap_id], "cc": [], "content": "now private"
+                }
+            }),
+        )
+        .await;
+
+        let remote = taverna::models::remote::RemotePostModel::find(db, note_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            remote.is_deleted,
+            "a post edited to non-public must be hidden"
+        );
+        assert_eq!(
+            remote.body.as_deref(),
+            Some("Remote body"),
+            "private text is never stored"
+        );
+        let feed = taverna::models::feed::home_feed(db, None, 50)
+            .await
+            .unwrap();
+        assert!(feed.items.is_empty());
     }
 
     #[tokio::test]

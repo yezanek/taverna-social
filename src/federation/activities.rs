@@ -185,8 +185,25 @@ async fn addressed_community(
     Ok(None)
 }
 
+/// Whether a remote Note is addressed to the public collection.
+///
+/// Mastodon direct messages and followers-only posts are delivered to our
+/// inboxes too, but leave out `as:Public`. Taverna only shows public content
+/// (direct messages are out of scope, SPEC.md), so anything else must never
+/// be stored: the feeds and comment threads have no per-viewer visibility
+/// checks. Only the Note's own `to`/`cc` count: they define who may see the
+/// object, and they are what `raw_json` keeps, so the m011 purge applies the
+/// same rule to rows cached before this check existed.
+fn is_public(note: &Note) -> bool {
+    note.to
+        .iter()
+        .chain(note.cc.iter())
+        .any(|target| matches!(target.as_str(), outbound::AP_PUBLIC | "as:Public"))
+}
+
 /// Create{Note}: remote posts go to `remote_posts`, remote replies to
 /// `remote_comments` (ADR-017). Never writes to local `posts`/`comments`.
+/// Non-public Notes (DMs, followers-only posts) are dropped.
 async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), anyhow::Error> {
     let note = &activity.object;
     let actor = activity.actor.as_str();
@@ -196,6 +213,10 @@ async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), 
             actor,
             note.attributed_to
         );
+    }
+    if !is_public(note) {
+        tracing::debug!(note = %note.id, "non-public note (DM or followers-only), ignoring");
+        return Ok(());
     }
     RemoteActorModel::ensure(db, actor).await?;
     let raw = serde_json::to_value(note)?;
@@ -241,8 +262,17 @@ async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), 
 }
 
 /// Update{Note}: only the author may edit, and only cached remote copies change.
+/// An edit that makes the Note non-public removes the cached copy instead, so
+/// the new private text is never shown.
 async fn handle_update(db: &DatabaseConnection, activity: Update) -> Result<(), anyhow::Error> {
     let actor = activity.actor.as_str();
+    if !is_public(&activity.object) {
+        let object = activity.object.id.as_str();
+        if !RemotePostModel::mark_deleted(db, actor, object).await? {
+            RemoteCommentModel::mark_deleted(db, actor, object).await?;
+        }
+        return Ok(());
+    }
     if !RemotePostModel::apply_update(db, actor, &activity.object).await? {
         RemoteCommentModel::apply_update(db, actor, &activity.object).await?;
     }
