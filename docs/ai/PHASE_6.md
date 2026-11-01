@@ -1,5 +1,11 @@
 # Phase 6 — Admin Onboarding & Community Creation Eligibility
 
+> **Status:** complete. This file is the plan this phase was built from. It is kept as a
+> record of why the code looks the way it does, and as a template for planning similar work.
+> Where it disagrees with the code, `SPEC.md`, `DECISIONS.md` or [DESIGN.md](../DESIGN.md), those win.
+>
+> **Changed since:** Instance settings are edited from `/admin/settings`. Eligibility disqualifies only currently suspended accounts.
+
 **Goal:** First-run admin setup so a new instance has a configured administrator
 from the start. A tunable eligibility system that controls which users can create
 communities, based on account age, email verification, and standing score.
@@ -129,7 +135,7 @@ POST /setup        → validate inputs, create admin user, mark setup complete, 
 3. Call `UserModel::create_local()` with `is_admin = true`
 4. Redirect to `/` with a flash message: "Welcome! You are logged in as admin."
 
-**Template:** `views/setup/wizard.html`
+**Template:** `assets/views/setup/wizard.html`
 - Minimal, standalone page (no nav bar, no theme switcher — setup happens before preferences)
 - Extends a plain layout, not base.html
 - Clear heading: "Set up your Taverna instance"
@@ -295,7 +301,7 @@ Community creation:
 
 All changes take effect immediately (no restart needed — read from DB per request).
 
-**Template:** `views/admin/settings.html`
+**Template:** `assets/views/admin/settings.html`
 
 ---
 
@@ -367,7 +373,7 @@ test_already_verified_token_is_noop()
 
 - [ ] `m008_eligibility.rs` migration (instance_settings, email_verifications tables; new user columns)
 - [ ] `src/initializers/first_run.rs` — `is_first_run()` + `FirstRunGuard` middleware
-- [ ] `GET /setup` and `POST /setup` handlers + `views/setup/wizard.html`
+- [ ] `GET /setup` and `POST /setup` handlers + `assets/views/setup/wizard.html`
 - [ ] `src/mailers/verification.rs` — email verification mailer
 - [ ] `GET /verify-email` and `POST /resend-verification` handlers
 - [ ] `users.standing_score` maintained by `UserModel::update_standing()`
@@ -379,7 +385,7 @@ test_already_verified_token_is_noop()
 - [ ] Suspend / Unsuspend and Force-verify-email admin actions
 - [ ] User settings page shows eligibility status and reasons
 - [ ] All tests pass (`cargo test`)
-- [ ] `cargo clippy -- -D warnings` passes
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt` applied
 
 ---
@@ -398,3 +404,121 @@ test_already_verified_token_is_noop()
 - DO NOT forget to reverse the standing delta when a vote is removed
   (VoteAction::Removed case in cast_vote)
 - DO NOT send verification emails in tests — use a mock mailer in test configuration
+
+---
+
+## Prompts
+
+Prompts for redoing or extending this phase with an AI coding agent. They work with any
+tool; see [INSTRUCTIONS.md](INSTRUCTIONS.md) for the workflow.
+
+### Implement
+
+```
+Read AGENTS.md, docs/ai/SPEC.md (Sections 3.5, 3.6, 3.7, and 4.11–4.13), and docs/ai/PHASE_6.md.
+
+Phases 1–5 are complete and the application federates correctly.
+
+Show me a plan before writing any code.
+
+Implement everything in PHASE_6.md in task order:
+
+Task 6.1 — First-run setup wizard
+  Critical: FirstRunGuard must NOT block /static/* or /setup* paths.
+  POST /setup must re-check is_first_run() — do not trust GET-time state.
+  Cache the is_first_run() result for max 60 seconds, bust it after setup.
+
+Task 6.2 — Email verification
+  Use Loco's built-in mailer. Use a mock mailer in test config.
+  Token must be a cryptographically random string (use uuid or rand crate),
+  not a predictable value.
+
+Task 6.3 — Standing score
+  standing_score is updated atomically: UPDATE users SET standing_score =
+  GREATEST(-100, standing_score + $delta) WHERE id = $id
+  The floor of -100 is enforced at the DB UPDATE level, not in Rust.
+
+Task 6.4 — Eligibility checker
+  All checks are additive — a user must pass ALL enabled checks.
+  Return human-readable reasons for each failed check.
+  Call this from both GET /c/new (show reasons in form) and POST /c/ (return 403).
+
+Task 6.5 — Admin eligibility settings dashboard
+  All settings read from DB on each request — no application restart needed.
+
+Tasks 6.6, 6.7, 6.8 — Admin user management, user-facing eligibility, tests.
+
+After completing all tasks:
+  cargo fmt && cargo clippy --all-targets --all-features -- -D warnings && cargo test
+
+Verify the Phase 6 deliverables checklist when done.
+```
+
+### Review
+
+```
+You are a QA engineer reviewing Phase 6 of the Taverna project.
+
+Read AGENTS.md, docs/ai/SPEC.md Sections 3.5–3.7 and 4.11–4.13, and docs/ai/PHASE_6.md.
+
+Verify:
+
+FIRST-RUN SETUP
+- Open src/initializers/first_run.rs. is_first_run() queries users table
+  for local users and returns true when count is 0.
+- FirstRunGuard middleware must NOT redirect /setup*, /static/*, or /verify-email*.
+  If it does: CRITICAL (setup page can't load its own CSS or JS).
+- POST /setup must call is_first_run() — if false, return 403.
+  If it trusts only a session variable or GET-time check: CRITICAL.
+- The admin user created by setup must have is_admin=true. If not: CRITICAL.
+- After setup, navigating to /setup must return 403, not the wizard form.
+
+EMAIL VERIFICATION
+- Tokens must be cryptographically random (uuid v4 or equivalent).
+  If tokens are sequential integers or predictable: CRITICAL.
+- Tokens expire after 24 hours. If no expiry check: CRITICAL.
+- Expired tokens must return a clear error, not a 500.
+- Verifying the same token twice must be a no-op (idempotent).
+- Verification emails must NOT be sent in tests (check for mock mailer config).
+
+STANDING SCORE
+- open src/models/users.rs or votes.rs. update_standing must use an atomic
+  UPDATE with GREATEST(-100, standing_score + $delta).
+  If it reads then writes (two queries): MEDIUM (race condition under load).
+- VoteModel::cast_vote must call update_standing for the content author,
+  not the voter. If it updates the voter: CRITICAL.
+- VoteAction::Removed case must reverse the delta (not just skip the update).
+- soft_remove on posts and comments must deduct standing from the author.
+
+ELIGIBILITY CHECKER
+- All enabled gates must ALL pass — one failure must block creation.
+- Reasons list must be accurate: only list the gates that actually failed.
+- GET /c/new must show reasons when user is ineligible (not a silent 403).
+- POST /c/ must return 403 with reasons when user is ineligible.
+
+ADMIN SETTINGS
+- instance_settings table has exactly one row (enforced by CHECK (id = true)).
+- POST /admin/settings must require is_admin=true. If a regular user can POST:
+  CRITICAL.
+- Settings take effect immediately on next request (no caching beyond the
+  request lifetime).
+
+USER-FACING ELIGIBILITY
+- /settings page shows eligibility status for the logged-in user.
+- Reasons shown match what check_community_creation_eligibility() returns.
+
+Run: cargo test
+Report any failing tests as CRITICAL.
+
+Check these specific tests exist (MEDIUM if missing):
+- test_setup_wizard_redirects_when_not_first_run
+- test_setup_disabled_after_first_user_created
+- test_account_age_gate
+- test_standing_score_gate
+- test_removed_content_disqualifies
+- test_upvote_increases_standing
+- test_vote_removal_reverses_delta
+- test_expired_token_rejected
+
+Report CRITICAL / MEDIUM / LOW.
+```

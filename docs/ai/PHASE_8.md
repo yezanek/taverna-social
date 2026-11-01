@@ -1,5 +1,11 @@
 # Phase 8 — Performance, Scalability & Federated Content Isolation
 
+> **Status:** complete. This file is the plan this phase was built from. It is kept as a
+> record of why the code looks the way it does, and as a template for planning similar work.
+> Where it disagrees with the code, `SPEC.md`, `DECISIONS.md` or [DESIGN.md](../DESIGN.md), those win.
+>
+> **Changed since:** Config files are YAML (`config/development.yaml`, `config/production.example.yaml`), not TOML. Delivery is dispatched by an in-process poller (ADR-021).
+
 **Goal:** Address confirmed performance bottlenecks observed during testing, ensure
 the application can handle several thousand concurrent users (comparable to a
 mid-sized Lemmy instance), and restructure the database so that cached content
@@ -517,7 +523,7 @@ test_follower_inbox_query_under_50ms_with_10000_followers()
 - [x] Connection pool config updated in both development.toml and production.toml
 - [x] All federation tests updated to reference remote_* tables
 - [x] New tests added to semantic test files (not a phase8_test.rs)
-- [x] `cargo check`, `cargo clippy -- -D warnings`, `cargo fmt` pass
+- [x] `cargo check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt` pass
 - [x] `cargo test` passes
 
 ---
@@ -537,3 +543,157 @@ test_follower_inbox_query_under_50ms_with_10000_followers()
   existing `following_id UUID` column
 - DO NOT forget the cascade: deleting a remote_actor must cascade to their
   remote_posts and remote_comments
+
+---
+
+## Prompts
+
+Prompts for redoing or extending this phase with an AI coding agent. They work with any
+tool; see [INSTRUCTIONS.md](INSTRUCTIONS.md) for the workflow.
+
+### Implement
+
+```
+Read AGENTS.md and docs/ai/PHASE_8.md completely before writing any code.
+
+Phases 1–7 are complete.
+
+This phase has two parts: (A) splitting federated content into dedicated tables,
+and (B) fixing performance bottlenecks. Show me a plan before starting any task.
+
+PART A — Federated content isolation (tasks 8.1–8.5, 8.8, 8.9)
+
+Task 8.1 — Migration m009
+  Create remote_actors, remote_posts, remote_comments tables exactly as specified.
+  Migrate remote users from users table to remote_actors.
+  Drop federation_objects table.
+  Show me the full migration SQL before running it.
+
+Task 8.2 — Migration m010
+  Add all performance indexes from Part B1 of PHASE_8.md.
+
+Task 8.3 — Update ActivityHandler implementations
+  All incoming remote content writes to remote_posts / remote_comments.
+  Verify no remote content is inserted into the local posts or comments tables.
+
+Task 8.4 — Update Object/Actor trait implementations
+  Local users → users table. Remote actors → remote_actors table.
+  Two separate Rust types: DbUser (local) and RemoteActor (remote).
+
+Task 8.5 — community_feed SQL view
+  Create the UNION ALL view as specified. Update feed handlers to use it.
+
+Task 8.8 — Shared inbox deduplication
+  Implement get_follower_inboxes_deduplicated.
+  Replace all direct inbox-list queries in fan-out with this function.
+
+Task 8.9 — Expire remote cache worker
+  Daily scheduled worker. Deletes from remote_comments, remote_posts,
+  remote_actors where stale_after < NOW() and nothing references the actor.
+  MUST NOT touch any rows in the local posts, comments, or users tables.
+
+PART B — Performance fixes (tasks 8.6, 8.7, 8.10)
+
+Task 8.6 — Async federation delivery
+  Audit every handler. Any SendActivityTask::send in a handler body is wrong.
+  Replace with enqueue_activity. Only the background worker calls SendActivityTask::send.
+
+Task 8.7 — Keyset pagination
+  Replace all OFFSET-based pagination with cursor-based (score, published_at) tuples.
+  Cursor is base64-encoded and passed as ?cursor= query parameter.
+  Apply to: community feed, home feed, user post history, admin lists.
+
+Task 8.10 — Connection pool config
+  Update config/development.yaml and config/production.yaml as specified.
+
+Task 8.11 — Tests
+  Add tests to semantic files. DO NOT create tests/phase8_test.rs.
+  federation_test.rs, post_test.rs, performance_test.rs as detailed in PHASE_8.md.
+
+After all tasks:
+  cargo fmt && cargo clippy --all-targets --all-features -- -D warnings && cargo test
+  Verify all deliverables in PHASE_8.md checklist.
+```
+
+### Review
+
+```
+You are a QA engineer reviewing Phase 8 of the Taverna project.
+
+Read AGENTS.md and docs/ai/PHASE_8.md.
+
+PART A — Federated content isolation
+
+A1. remote_* tables exist
+    Run: \dt in psql against the database.
+    Must find: remote_actors, remote_posts, remote_comments.
+    Must NOT find: federation_objects (should be dropped).
+
+A2. users table is local-only
+    Run: SELECT COUNT(*) FROM users WHERE is_local = false;
+    Must return 0. If any remote users remain in users: CRITICAL.
+
+A3. Incoming federation writes to remote tables
+    Open all ActivityHandler::receive implementations.
+    Create{Note} from a remote actor must INSERT into remote_posts, not posts.
+    If any remote content is inserted into posts or comments: CRITICAL.
+
+A4. community_feed view exists and is correct
+    Run: \dv in psql. Must find community_feed.
+    Run: SELECT origin, COUNT(*) FROM community_feed GROUP BY origin;
+    Must show both 'local' and 'remote' rows (if remote posts exist).
+
+A5. Expiry worker does not touch local content
+    Review src/workers/expire_remote_cache.rs.
+    DELETE statements must only reference remote_posts, remote_comments,
+    remote_actors — never posts, comments, or users.
+    If any local table is touched: CRITICAL.
+
+A6. Shared inbox deduplication
+    Open get_follower_inboxes_deduplicated.
+    Must prefer shared_inbox_url over inbox_url when non-null.
+    Must deduplicate — HashSet or equivalent.
+    If it returns one URL per follower without deduplication: MEDIUM.
+
+PART B — Performance
+
+B1. No SendActivityTask::send in handlers
+    grep -rn "SendActivityTask::send" src/controllers/ src/models/
+    Any match is CRITICAL. Only src/workers/ may call SendActivityTask::send.
+
+B2. No OFFSET pagination
+    grep -rn "offset\|OFFSET\|\.paginate(" src/models/ src/controllers/
+    Any paginate() or OFFSET in feed queries: CRITICAL.
+    Cursor-based pagination must be used for all feeds.
+
+B3. Connection pool config
+    Open config/production.yaml.
+    max_connections must be >= 50.
+    min_connections must be >= 10.
+    If defaults (typically 5/1) are unchanged: MEDIUM.
+
+B4. Performance indexes exist
+    Run in psql:
+      SELECT indexname FROM pg_indexes
+      WHERE tablename IN ('posts','remote_posts','votes','follows','comments')
+      ORDER BY tablename, indexname;
+    Check for:
+      idx_posts_community_score (partial: not deleted/removed)
+      idx_votes_user_post (partial: post_id not null)
+      idx_follows_community_accepted (partial: accepted=true)
+    Missing any: MEDIUM.
+
+B5. Test file naming
+    ls tests/
+    Must NOT contain phase8_test.rs.
+    New tests must be in federation_test.rs, post_test.rs, performance_test.rs.
+    If phase8_test.rs exists: MEDIUM — reorganise into semantic files.
+
+Run: cargo test
+Report any failures as CRITICAL.
+
+Run: cargo clippy --all-targets --all-features -- -D warnings
+Report any warnings as MEDIUM.
+
+Report CRITICAL / MEDIUM / LOW.
+```

@@ -1,5 +1,11 @@
 # Phase 3 — Communities, Posts & Theme Switcher (Local Only)
 
+> **Status:** complete. This file is the plan this phase was built from. It is kept as a
+> record of why the code looks the way it does, and as a template for planning similar work.
+> Where it disagrees with the code, `SPEC.md`, `DECISIONS.md` or [DESIGN.md](../DESIGN.md), those win.
+>
+> **Changed since:** Handlers render through the `Views` extractor, which injects the theme once (ADR-027), rather than a `render_with_theme` helper. Templates live in `assets/views/`.
+
 **Goal:** Full community and post CRUD, voting, comments, and the theme switcher (light/dark/sepia). No federation yet.
 
 **Prerequisites:** Phase 2 complete. Auth working. `cargo test` passes.
@@ -202,7 +208,7 @@ nav {
 }
 ```
 
-### Task 3.9 — Update base layout template (views/layouts/base.html)
+### Task 3.9 — Update base layout template (assets/views/layouts/base.html)
 
 ```html
 <!DOCTYPE html>
@@ -291,11 +297,11 @@ Store raw markdown. Render in handler, pass rendered HTML to template context.
 
 ### Task 3.13 — Templates
 
-- `views/communities/feed.html` — community info, join/leave (HTMX), post list, infinite scroll
-- `views/communities/post.html` — post, vote buttons, comment form, threaded comments
-- `views/partials/post_card.html` — score, votes (HTMX), title, author, time, comment count
-- `views/partials/comment.html` — score, votes (HTMX), author, body (rendered MD), reply button
-- `views/partials/vote_buttons.html` — the HTMX swap target for votes
+- `assets/views/communities/feed.html` — community info, join/leave (HTMX), post list, infinite scroll
+- `assets/views/communities/post.html` — post, vote buttons, comment form, threaded comments
+- `assets/views/partials/post_card.html` — score, votes (HTMX), title, author, time, comment count
+- `assets/views/partials/comment.html` — score, votes (HTMX), author, body (rendered MD), reply button
+- `assets/views/partials/vote_buttons.html` — the HTMX swap target for votes
 
 All templates use CSS custom properties via `var(--...)` — no hardcoded colours.
 
@@ -354,7 +360,7 @@ test_nested_reply_path()
 - [ ] `src/initializers/theme_middleware.rs` — `CurrentTheme` extractor
 - [ ] `src/controllers/theme.rs` — `POST /theme` handler with cookie
 - [ ] `assets/static/theme.css` — all three themes with CSS custom properties
-- [ ] `views/layouts/base.html` — `data-theme="{{ theme }}"`, theme switcher form, nav
+- [ ] `assets/views/layouts/base.html` — `data-theme="{{ theme }}"`, theme switcher form, nav
 - [ ] All community and post templates using `var(--...)` colours
 - [ ] All routes registered in app.rs including `/theme`
 - [ ] Theme middleware in middleware stack
@@ -370,3 +376,107 @@ test_nested_reply_path()
 - DO NOT forget to call `recalculate_score` after every vote
 - DO NOT apply theme injection to HTMX fragment responses — only to full-page responses
 - DO NOT forget `post_has_content` constraint (body OR url required)
+
+---
+
+## Prompts
+
+Prompts for redoing or extending this phase with an AI coding agent. They work with any
+tool; see [INSTRUCTIONS.md](INSTRUCTIONS.md) for the workflow.
+
+### Implement
+
+```
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_3.md.
+
+Phases 1 and 2 are complete. Auth works.
+
+Show me a plan before writing any code.
+
+Implement everything in PHASE_3.md. Key things:
+
+Theme switcher (Tasks 3.5–3.9):
+- Theme middleware reads taverna_theme cookie, injects CurrentTheme extension
+- POST /theme sets cookie: Max-Age=31536000, SameSite=Lax, NOT httpOnly
+- assets/static/theme.css must define all three [data-theme] blocks with the
+  exact CSS custom properties from SPEC.md Section 3.5
+- base.html must have data-theme="{{ theme }}" on the <html> element
+- All templates use var(--bg-primary), var(--text-primary) etc — no hardcoded colours
+- HTMX vote endpoints return fragments only — do not inject theme into fragments
+
+Other:
+- ltree path logic for comments (Task 3.3) — get this exactly right
+- Always call recalculate_score after any vote change
+
+Verify the Phase 3 deliverables checklist when done.
+```
+
+Gate:
+```bash
+cargo check && cargo test
+# Manual:
+cargo loco start &
+curl -X POST http://localhost:3000/theme -d "theme=dark" -v
+# Must see Set-Cookie: taverna_theme=dark in response
+```
+
+### Review
+
+```
+You are a QA engineer reviewing Phase 3 of the Taverna project.
+
+Read AGENTS.md, docs/ai/SPEC.md Section 3.5, and docs/ai/PHASE_3.md.
+
+Verify:
+
+THEME — CSS FILE
+- Open assets/static/theme.css.
+- Must contain three blocks: [data-theme="light"], [data-theme="dark"], [data-theme="sepia"].
+- Each must define at minimum these properties:
+  --bg-primary, --bg-secondary, --bg-card, --text-primary, --text-secondary,
+  --text-muted, --border, --accent, --accent-hover, --upvote, --downvote,
+  --link, --link-hover, --nav-bg, --nav-text, --score-positive, --score-negative
+- Missing blocks or properties: CRITICAL.
+
+THEME — BASE TEMPLATE
+- Open assets/views/layouts/base.html.
+- <html> tag must be: <html lang="en" data-theme="{{ theme }}">
+- theme.css must be linked: <link rel="stylesheet" href="/static/theme.css">
+- Nav must contain the theme switcher form (POST to /theme, three buttons).
+- If data-theme is hardcoded (e.g. data-theme="light"): CRITICAL.
+
+THEME — HANDLER
+- Open src/controllers/theme.rs.
+- POST /theme must set cookie: name=taverna_theme, SameSite=Lax, Max-Age=31536000.
+- Cookie must NOT be HttpOnly.
+- Invalid theme values must default to "light".
+- Must redirect to Referer or / if no Referer.
+
+THEME — MIDDLEWARE
+- Open src/initializers/theme_middleware.rs.
+- Must read taverna_theme cookie and inject CurrentTheme into request extensions.
+- Must be in the middleware stack before all handlers.
+
+HARDCODED COLOURS
+- Search assets/views/ for hex colours (#[0-9a-fA-F]{3,6}) and rgb(...) values.
+- Any found in .html files (not in theme.css): MEDIUM.
+
+HTMX VOTE ENDPOINTS
+- Vote handlers must return HTML fragments only (no full page, no theme injection).
+- Check by looking for HX-Request header detection in vote handlers.
+
+LTREE PATHS
+- Open src/models/comments.rs, the create() method.
+- Top-level path: format!("{}.{}", post_seg, comment_seg)
+- Reply path: format!("{}.{}", parent.path, comment_seg)
+- Each segment must be prefixed with "c" (ltree labels must start with a letter).
+
+SCORE RECALCULATION
+- After every vote in src/models/votes.rs, recalculate_score must be called.
+- If it's missing: CRITICAL (scores will be stale).
+
+Run: cargo check
+Run: cargo test (including theme tests)
+
+Report CRITICAL / MEDIUM / LOW.
+```

@@ -116,9 +116,12 @@ weekly: outdated crates, `cargo audit` and the `cargo deny` licence check.
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md): config files, environment
   variables, the `settings:` block and the admin settings.
 - [DEPLOY.md](DEPLOY.md): running Taverna in production behind Caddy.
+- [docs/DESIGN.md](docs/DESIGN.md): architecture and design.
 - [docs/ai/SPEC.md](docs/ai/SPEC.md): the functional specification.
 - [docs/ai/DECISIONS.md](docs/ai/DECISIONS.md): architecture decision records.
-- [AGENTS.md](AGENTS.md): coding rules for contributors and AI tools.
+- [AGENTS.md](AGENTS.md): coding rules and branch/PR naming for contributors and AI tools.
+- [docs/ai/INSTRUCTIONS.md](docs/ai/INSTRUCTIONS.md): how to work on Taverna with AI
+  coding agents; [docs/ai/REVIEW.md](docs/ai/REVIEW.md) has the review prompts.
 
 ## Project layout
 

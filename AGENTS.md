@@ -2,9 +2,10 @@
 
 **Location:** Repo root. Read by AI coding tools and human contributors alike.
 
-**Read this file first. Read SPEC.md second. Then read your phase file.**
+**Read this file first. Read `docs/ai/SPEC.md` second. Then read the task: an issue, or a phase file.**
 
-All other planning files (`SPEC.md`, `PHASE_*.md`, `DECISIONS.md`, etc.) are in `docs/ai/`.
+All other AI planning files (`SPEC.md`, `DECISIONS.md`, `INSTRUCTIONS.md`, `REVIEW.md`, `PHASE_*.md`) are in `docs/ai/`.
+`docs/ai/INSTRUCTIONS.md` describes the workflow; `docs/DESIGN.md` describes how the system is built.
 
 ---
 
@@ -58,7 +59,8 @@ taverna-social/
 ├── tests/                     ← integration tests, one file per area
 └── docs/
     ├── CONFIGURATION.md
-    └── ai/                    ← SPEC, DECISIONS, PHASE_* plans
+    ├── DESIGN.md              ← architecture and design
+    └── ai/                    ← SPEC, DECISIONS, INSTRUCTIONS, REVIEW, PHASE_* plans
 ```
 
 ---
@@ -91,28 +93,45 @@ taverna-social/
 
 ---
 
-## Phase Execution Instructions
+## Working on a Task
 
-Each phase has its own file: `PHASE_1.md`, `PHASE_2.md`, etc.
+The full workflow and reusable prompts are in `docs/ai/INSTRUCTIONS.md`. In short:
 
-**Before starting a phase:**
-1. Read this file (AGENTS.md)
-2. Read SPEC.md
-3. Read your phase file completely before writing any code
-4. Identify all files you will create or modify
-5. Check that the previous phase's deliverables exist
+**Before writing code:**
+1. Read this file, `docs/ai/SPEC.md`, and the task (an issue, or a `docs/ai/PHASE_*.md` file)
+2. Read the `docs/ai/DECISIONS.md` entries that cover the area you will touch
+3. Show a plan: every file you will create or modify, and why; wait for approval
 
 **While working:**
-- Complete tasks in the order listed in the phase file
-- After each task, verify it compiles: `cargo check`
-- After each task that adds a migration, verify it runs: `cargo loco db migrate`
-- Do not proceed to the next task if the current one has compile errors
+- Complete tasks in order; run `cargo check` after each one
+- After adding a migration, verify it runs: `cargo loco db migrate`
+- Do not move on while the current task has compile errors
 
-**When finished with a phase:**
-- Run `cargo test` — all tests must pass
-- Run `cargo clippy -- -D warnings` — no warnings allowed
-- Run `cargo fmt` — code must be formatted
-- Confirm every deliverable listed in the phase file exists
+**When finished:**
+- `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`
+  and `cargo test --all-features` all pass; never delete or skip a test to get there
+- Every deliverable in the task exists
+- SPEC.md, DESIGN.md, DECISIONS.md and the user docs are updated if behaviour,
+  design or settings changed
+
+The phase files describe work that is already complete. They are a record and a
+template; where one disagrees with the code, the code and SPEC.md win.
+
+---
+
+## Branches and Pull Requests
+
+**Always use semantic names. Never use generic ones** such as `patch-1`, `update`,
+`wip`, or a tool's default branch name (`claude/project-thread-1234`, `opencode/…`).
+If your tool picks a generic branch name for you, rename it before pushing.
+
+- **Branch:** `<type>/<short-kebab-case-summary>`, e.g. `feat/community-bans`,
+  `fix/rate-limit-proxy-header`, `chore/remove-ai-tool-leftovers`
+- **PR title:** a conventional commit, `<type>: <summary>` in the imperative, e.g.
+  `fix: key rate limits on the socket peer`. CI's PR Title check enforces this.
+- **Commits:** the same `<type>: <summary>` form
+- `<type>` is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`
+- One change per branch; branch from `master` and fill in `.github/pull_request_template.md`
 
 ---
 

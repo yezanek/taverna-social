@@ -1,5 +1,11 @@
 # Phase 4 — ActivityPub Federation
 
+> **Status:** complete. This file is the plan this phase was built from. It is kept as a
+> record of why the code looks the way it does, and as a template for planning similar work.
+> Where it disagrees with the code, `SPEC.md`, `DECISIONS.md` or [DESIGN.md](../DESIGN.md), those win.
+>
+> **Changed since:** HTTP signatures, actor fetching and WebFinger are done by the `activitypub_federation` crate (0.7), not by a hand-written `src/federation/signatures.rs`; see SPEC.md §6. Outbound activities are built in `federation::outbound` (ADR-023) and only enqueued by handlers (ADR-019).
+
 **Goal:** Full ActivityPub federation. Lemmy instances can subscribe to Taverna communities. Mastodon users can follow Taverna profiles. Outbound activities are delivered via the background worker.
 
 **Prerequisites:** Phase 3 complete. All local features working. `cargo test` passes.
@@ -374,3 +380,121 @@ test_announce_pattern_fires_on_community_post()
 - **DO NOT** forget to send `Accept{Follow}` in response to incoming `Follow`
 - **DO NOT** sign requests with the community key when the actor is a user and vice versa
 - **DO NOT** block the web request thread for activity delivery — always use the worker queue
+
+---
+
+## Prompts
+
+Prompts for redoing or extending this phase with an AI coding agent. They work with any
+tool; see [INSTRUCTIONS.md](INSTRUCTIONS.md) for the workflow.
+
+### Implement
+
+```
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_4.md.
+
+Phases 1–3 are complete. Local features and the theme switcher work.
+
+Show me a plan before writing any code.
+
+Implement ActivityPub federation using the activitypub_federation crate (version 0.6,
+axum feature). The crate handles HTTP signatures, actor fetching, and activity sending.
+
+Do NOT implement these manually:
+- Use receive_activity() in inbox handlers (signatures auto-verified)
+- Use SendActivityTask::send() for all outbound activities
+- Use build_webfinger_response() and extract_webfinger_name() for WebFinger
+- Use FederationJson and FEDERATION_CONTENT_TYPE for content negotiation
+- Use ObjectId::dereference() for actor resolution
+
+Critical:
+1. Announce pattern (Task 4.4) is mandatory for Lemmy compatibility
+2. All ActivityHandler::receive implementations must be idempotent (check ap_id)
+3. Call verify_domains_match() in every Object::verify implementation
+4. Apply FederationMiddleware to all AP route groups
+
+Implement Task 4.1 (AP struct types) first and show me the result before continuing.
+
+Verify the Phase 4 deliverables checklist when done.
+```
+
+Gate:
+```bash
+cargo check && cargo test
+cargo loco start &
+curl "http://localhost:3000/.well-known/webfinger?resource=acct:admin@localhost"
+curl -H "Accept: application/activity+json" "http://localhost:3000/u/admin"
+curl "http://localhost:3000/nodeinfo/2.0"
+```
+
+### Review
+
+```
+You are a QA engineer reviewing Phase 4 of the Taverna project.
+
+Read AGENTS.md, docs/ai/SPEC.md Section 6, and docs/ai/PHASE_4.md.
+
+Verify:
+
+NO HAND-ROLLED SIGNATURES
+- Search src/ for: use rsa::, use sha2::, use base64:: in federation context.
+- If found: CRITICAL — the activitypub_federation crate handles this.
+
+INBOX HANDLERS USE receive_activity
+- Open src/controllers/federation/inbox.rs.
+- Both user_inbox and community_inbox must call receive_activity::<...>() from the crate.
+- If they verify signatures manually: CRITICAL.
+
+OUTBOUND USES SendActivityTask
+- Search src/ for reqwest::Client and reqwest::post in federation code.
+- If raw reqwest is used to send to remote inboxes: CRITICAL.
+
+WEBFINGER USES CRATE HELPERS
+- Open src/controllers/federation/webfinger.rs.
+- Must call build_webfinger_response() and extract_webfinger_name().
+- If it manually builds the JRD JSON: MEDIUM.
+
+verify_domains_match IN EVERY Object::verify
+- Open each Object trait implementation (person.rs, group.rs, note.rs).
+- Each verify() must call verify_domains_match(json.id.inner(), expected_domain)?.
+- Missing calls: CRITICAL (enables cross-domain actor spoofing).
+
+ANNOUNCE PATTERN
+- Find Create's ActivityHandler::receive implementation.
+- When the inbox owner is a Community, after saving the post, it must:
+  (a) Build an Announce activity with the community as actor
+  (b) Call SendActivityTask::send with the community as signing actor
+  (c) Send to the community's follower inboxes
+- If either (a) or (b) is missing: CRITICAL (Lemmy federation broken).
+
+IDEMPOTENCY IN ALL receive() METHODS
+- Check every ActivityHandler::receive.
+- Each must check if the object exists by ap_id before inserting.
+- Missing checks: CRITICAL (duplicate data on delivery retries).
+
+FederationMiddleware APPLIED
+- Open src/app.rs.
+- The AP route group must have .layer(FederationMiddleware::new(...)).
+- If missing: CRITICAL (runtime panics on Data<T> extraction).
+
+CONTENT NEGOTIATION USES FEDERATION_CONTENT_TYPE
+- Search for hardcoded "application/activity+json" string.
+- Should use the FEDERATION_CONTENT_TYPE constant from the crate.
+- If hardcoded: LOW.
+
+NodeInfo CORRECTNESS
+- Open src/controllers/federation/nodeinfo.rs.
+- /nodeinfo/2.0 must return: "name": "taverna" and "protocols": ["activitypub"].
+- If name is wrong or protocols is missing: MEDIUM.
+
+Run: cargo check
+Run: cargo test
+
+Then manually test:
+  cargo loco start &
+  curl "http://localhost:3000/.well-known/webfinger?resource=acct:admin@localhost"
+  curl -H "Accept: application/activity+json" "http://localhost:3000/u/admin"
+  curl "http://localhost:3000/nodeinfo/2.0"
+
+Report CRITICAL / MEDIUM / LOW.
+```

@@ -1,5 +1,11 @@
 # Phase 1 — Project Scaffold & Database
 
+> **Status:** complete. This file is the plan this phase was built from. It is kept as a
+> record of why the code looks the way it does, and as a template for planning similar work.
+> Where it disagrees with the code, `SPEC.md`, `DECISIONS.md` or [DESIGN.md](../DESIGN.md), those win.
+>
+> **Changed since:** The project is already scaffolded, so Task 1.1 does not need repeating. Config files are YAML (`config/*.yaml`), not TOML: Loco only reads YAML (see the ADR-016 note). pgmq is not used (ADR-021). Migrations m001 to m006 are this phase's; later phases add m007 to m010.
+
 **Goal:** A compiling Loco project with all database migrations applied and SeaORM entities generated. No web routes yet. No business logic yet. Just the foundation.
 
 **Prerequisites:** Nothing. This is the first phase.
@@ -166,3 +172,69 @@ Before marking Phase 1 complete, verify ALL of these exist:
 - **DO NOT** use `INTEGER` for primary keys — use `UUID`
 - **DO NOT** forget to register new migrations in `migration/src/lib.rs`
 - **DO NOT** hand-write SeaORM entities — generate them with `sea-orm-cli`
+
+---
+
+## Prompts
+
+Prompts for redoing or extending this phase with an AI coding agent. They work with any
+tool; see [INSTRUCTIONS.md](INSTRUCTIONS.md) for the workflow.
+
+### Implement
+
+Run from the **repo root** (`taverna-social/`), with docs/ai/ files visible:
+
+```
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_1.md from the docs/ai/ directory.
+
+Follow every instruction in PHASE_1.md exactly. Do not skip any task.
+
+Before writing any code, show me a plan of every file you will create or modify,
+then wait for my approval.
+
+Important: include last_fetched_at TIMESTAMPTZ on the users and communities tables —
+the activitypub_federation crate requires this field for the Object trait's
+last_refreshed_at() method.
+
+Verify the docs/ai/PHASE_1.md deliverables checklist when done.
+
+Note: `loco new` will try to create a subdirectory. After scaffolding, move all
+generated files up to the repo root (Cargo.toml, src/, config/, migration/, assets/)
+and delete the empty subdirectory before committing.
+```
+
+Gate before Phase 2:
+```bash
+cargo check
+cargo loco db migrate
+cargo test
+```
+
+### Review
+
+```
+You are a QA engineer reviewing Phase 1 of the Taverna project.
+
+Read AGENTS.md, docs/ai/SPEC.md, and docs/ai/PHASE_1.md.
+
+Then verify:
+
+DELIVERABLES — check every item in the docs/ai/PHASE_1.md deliverables checklist exists.
+
+DATABASE SCHEMA — open each migration file and verify:
+- users and communities tables have last_fetched_at TIMESTAMPTZ (required by activitypub_federation crate)
+- All primary keys are UUID, not INTEGER
+- All timestamps are TIMESTAMPTZ (not TIMESTAMP)
+- All indexes from SPEC.md Sections 4.2–4.9 are present
+- ltree extension is created in m001_extensions.rs
+- outbound_activities uses TEXT[] for target_inboxes (not a separate table per inbox)
+
+ENTITIES — verify src/models/_entities/ is populated with generated SeaORM files.
+
+MIGRATIONS — verify migration/src/lib.rs registers all 6 migrations in order.
+
+Run: cargo check
+Run: cargo test
+
+Report issues as CRITICAL (blocker), MEDIUM (should fix), or LOW (style).
+```
