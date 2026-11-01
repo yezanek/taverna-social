@@ -518,7 +518,9 @@ mod tests {
     #[serial]
     async fn test_jwt_token_generation() {
         setup();
-        use taverna::common::jwt::{create_access_token, create_refresh_token, verify_token};
+        use taverna::common::jwt::{
+            TokenKind, create_access_token, create_refresh_token, verify_token,
+        };
 
         let boot = boot_test::<App>().await.unwrap();
         let db = &boot.app_context.db;
@@ -537,11 +539,15 @@ mod tests {
         let access_token = create_access_token(&user, secret).unwrap();
         let refresh_token = create_refresh_token(&user, secret).unwrap();
 
-        let access_claims = verify_token(&access_token, secret).unwrap();
+        let access_claims = verify_token(&access_token, secret, TokenKind::Access).unwrap();
         assert_eq!(access_claims.sub, user.id.to_string());
         assert_eq!(access_claims.is_admin, user.is_admin);
 
-        let refresh_claims = verify_token(&refresh_token, secret).unwrap();
+        let refresh_claims = verify_token(&refresh_token, secret, TokenKind::Refresh).unwrap();
         assert_eq!(refresh_claims.sub, user.id.to_string());
+
+        // A refresh token is not an access token, and vice versa.
+        assert!(verify_token(&refresh_token, secret, TokenKind::Access).is_err());
+        assert!(verify_token(&access_token, secret, TokenKind::Refresh).is_err());
     }
 }

@@ -166,6 +166,22 @@ impl CommunityModel {
             .map(|m| m.map(|m| m.role))
     }
 
+    /// True when `user` may moderate the community: an instance admin or one
+    /// of its moderators (SPEC §3.1).
+    #[instrument(skip(db, user))]
+    pub async fn can_moderate(
+        db: &DatabaseConnection,
+        community_id: Uuid,
+        user: &crate::models::_entities::users::Model,
+    ) -> Result<bool, sea_orm::DbErr> {
+        if user.is_admin {
+            return Ok(true);
+        }
+        Ok(Self::get_member_role(db, community_id, user.id)
+            .await?
+            .is_some_and(|role| role == "moderator"))
+    }
+
     /// Adds a user as a member of a community with the given role.
     #[instrument(skip(db))]
     pub async fn add_member(

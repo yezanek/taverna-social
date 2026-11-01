@@ -29,7 +29,7 @@ mailer:
     secure: false
 
 database:
-  uri: {{ get_env(name="TEST_DATABASE_URL", default="postgres://localhost:5432/taverna_test") }}
+  uri: <%= get_env(name="TEST_DATABASE_URL", default="postgres://localhost:5432/taverna_test") %>
   enable_logging: false
   connect_timeout: 5000
   idle_timeout: 500

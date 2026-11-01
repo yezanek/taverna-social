@@ -12,6 +12,6 @@ mod tests {
             sea_orm::DatabaseBackend::Postgres,
             "SELECT 1".to_string(),
         );
-        db.execute(result).await.unwrap();
+        db.execute_raw(result).await.unwrap();
     }
 }

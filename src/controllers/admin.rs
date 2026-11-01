@@ -1,7 +1,8 @@
+use crate::controllers::errors::{forbidden, invalid_csrf};
 use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::{Extension, Form};
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use loco_rs::prelude::*;
 use sea_orm::PaginatorTrait;
 use serde::Deserialize;
@@ -9,7 +10,7 @@ use serde_json::json;
 use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
-use crate::controllers::auth::validate_csrf;
+use crate::controllers::csrf;
 use crate::initializers::auth_middleware::AuthUser;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::_entities::{community_members, posts};
@@ -45,31 +46,27 @@ pub async fn dashboard(
     Query(page): Query<AdminListQuery>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
     let communities_cursor = Cursor::from_param(page.communities_cursor.as_deref());
     let users_cursor = Cursor::from_param(page.users_cursor.as_deref());
 
     let community_page =
-        CommunityModel::list_all(&ctx.db, communities_cursor.as_ref(), ADMIN_PER_PAGE)
-            .await
-            .map_err(|_| Error::InternalServerError)?;
+        CommunityModel::list_all(&ctx.db, communities_cursor.as_ref(), ADMIN_PER_PAGE).await?;
 
     let mut communities: Vec<serde_json::Value> = Vec::new();
     for c in community_page.items {
         let member_count = community_members::Entity::find()
             .filter(community_members::Column::CommunityId.eq(c.id))
             .count(&ctx.db)
-            .await
-            .map_err(|_| Error::InternalServerError)?;
+            .await?;
         let post_count = posts::Entity::find()
             .filter(posts::Column::CommunityId.eq(c.id))
             .filter(posts::Column::IsDeleted.eq(false))
             .filter(posts::Column::IsRemoved.eq(false))
             .count(&ctx.db)
-            .await
-            .map_err(|_| Error::InternalServerError)?;
+            .await?;
         communities.push(json!({
             "slug": c.slug,
             "name": c.name,
@@ -79,9 +76,7 @@ pub async fn dashboard(
         }));
     }
 
-    let user_page = UserModel::list_all(&ctx.db, users_cursor.as_ref(), ADMIN_PER_PAGE)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let user_page = UserModel::list_all(&ctx.db, users_cursor.as_ref(), ADMIN_PER_PAGE).await?;
 
     let users: Vec<serde_json::Value> = user_page
         .items
@@ -99,13 +94,7 @@ pub async fn dashboard(
         })
         .collect();
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -135,16 +124,15 @@ pub async fn ban_user(
     Form(form): Form<AdminForm>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(invalid_csrf());
     }
 
     let user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if user.id == current_user.id {
@@ -157,7 +145,7 @@ pub async fn ban_user(
 
     UserModel::set_banned(&ctx.db, user.id, true)
         .await
-        .map_err(|_| Error::InternalServerError)?;
+        .map_err(Error::wrap)?;
 
     Ok(format::redirect("/admin").into_response())
 }
@@ -174,21 +162,20 @@ pub async fn unban_user(
     Form(form): Form<AdminForm>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(invalid_csrf());
     }
 
     let user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     UserModel::set_banned(&ctx.db, user.id, false)
         .await
-        .map_err(|_| Error::InternalServerError)?;
+        .map_err(Error::wrap)?;
 
     Ok(format::redirect("/admin").into_response())
 }
@@ -220,35 +207,12 @@ pub async fn settings(
     Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
-    let settings = crate::models::_entities::instance_settings::Entity::find()
-        .one(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?
-        .unwrap_or_else(|| crate::models::_entities::instance_settings::Model {
-            id: true,
-            community_creation_open: true,
-            require_min_account_age: false,
-            min_account_age_days: 30,
-            require_email_verified: false,
-            require_min_standing: false,
-            min_standing_score: 0,
-            disqualify_if_content_removed: false,
-            disqualify_if_suspended: false,
-            instance_name: "Taverna".to_string(),
-            open_registrations: true,
-            updated_at: chrono::DateTime::default(),
-        });
+    let settings = crate::models::instance_settings::load(&ctx.db).await?;
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
 
     let response = helpers::render_with_theme(
         &v,
@@ -274,18 +238,17 @@ pub async fn update_settings(
     Form(form): Form<AdminSettingsForm>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(invalid_csrf());
     }
 
     let mut settings: crate::models::_entities::instance_settings::ActiveModel =
         crate::models::_entities::instance_settings::Entity::find()
             .one(&ctx.db)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+            .await?
             .ok_or_else(|| Error::NotFound)?
             .into();
 
@@ -307,10 +270,7 @@ pub async fn update_settings(
     settings.open_registrations = sea_orm::Set(form.open_registrations.is_some());
     settings.updated_at = sea_orm::Set(chrono::Utc::now().into());
 
-    settings
-        .update(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    settings.update(&ctx.db).await?;
 
     Ok(format::redirect("/admin/settings").into_response())
 }
@@ -327,16 +287,15 @@ pub async fn suspend_user(
     Form(form): Form<AdminForm>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(invalid_csrf());
     }
 
     let user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if user.id == current_user.id {
@@ -351,7 +310,7 @@ pub async fn suspend_user(
 
     UserModel::set_suspended(&ctx.db, user.id, true)
         .await
-        .map_err(|_| Error::InternalServerError)?;
+        .map_err(Error::wrap)?;
 
     Ok(format::redirect("/admin").into_response())
 }
@@ -368,21 +327,20 @@ pub async fn unsuspend_user(
     Form(form): Form<AdminForm>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(invalid_csrf());
     }
 
     let user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     UserModel::set_suspended(&ctx.db, user.id, false)
         .await
-        .map_err(|_| Error::InternalServerError)?;
+        .map_err(Error::wrap)?;
 
     Ok(format::redirect("/admin").into_response())
 }
@@ -399,21 +357,20 @@ pub async fn force_verify_user(
     Form(form): Form<AdminForm>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(invalid_csrf());
     }
 
     let user = UserModel::find_by_username(&ctx.db, &username)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     UserModel::force_verify_email(&ctx.db, user.id)
         .await
-        .map_err(|_| Error::InternalServerError)?;
+        .map_err(Error::wrap)?;
 
     Ok(format::redirect("/admin").into_response())
 }
@@ -430,21 +387,18 @@ pub async fn delete_community(
     Form(form): Form<AdminForm>,
 ) -> Result<Response> {
     if !current_user.is_admin {
-        return Err(Error::Unauthorized("Admin access required".to_string()));
+        return Err(forbidden("Admin access required"));
     }
 
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
-        return Err(Error::Unauthorized("Invalid CSRF token".to_string()));
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(invalid_csrf());
     }
 
     let community = CommunityModel::find_by_slug(&ctx.db, &slug)
-        .await
-        .map_err(|_| Error::InternalServerError)?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    CommunityModel::soft_delete(&ctx.db, community.id)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    CommunityModel::soft_delete(&ctx.db, community.id).await?;
 
     Ok(format::redirect("/admin").into_response())
 }

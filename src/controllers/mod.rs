@@ -1,6 +1,8 @@
 pub mod admin;
 pub mod auth;
 pub mod communities;
+pub mod csrf;
+pub mod errors;
 pub mod federation;
 pub mod home;
 pub mod posts;

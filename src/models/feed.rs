@@ -2,7 +2,7 @@
 //! (PHASE_8.md Part A view, Part B4, ADR-018).
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, FromQueryResult, Statement, Value};
+use sea_orm::{DatabaseConnection, DbErr, FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use uuid::Uuid;

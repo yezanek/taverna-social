@@ -1,10 +1,11 @@
 use axum::Extension;
 use axum::extract::Query;
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use loco_rs::prelude::*;
 use serde_json::json;
 use tracing::instrument;
 
+use crate::controllers::csrf;
 use crate::initializers::auth_middleware::OptionalAuthUser;
 use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::feed::{self, CursorQuery};
@@ -29,13 +30,7 @@ pub async fn index(
             Error::InternalServerError
         })?;
 
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
     let response = helpers::render_with_theme(
         &v,
         "home/index.html",

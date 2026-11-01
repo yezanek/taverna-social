@@ -18,7 +18,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   # Cache key busted when rust-toolchain changes
-  RUST_CACHE_KEY: v1
+  RUST_CACHE_KEY: v2
 
 jobs:
   # ── Quick checks first (fail fast, cheap) ────────────────────────────────
@@ -74,6 +74,10 @@ jobs:
       BASE_URL: http://localhost:3000
       TAVERNA_DOMAIN: localhost
       JWT_SECRET: test-secret-not-for-production
+      # About 20 test binaries link against Loco 1.x; full debug info and
+      # incremental artifacts filled the runner's disk (ld: Bus error).
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: 0
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -83,9 +87,6 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ env.RUST_CACHE_KEY }}
-
-      - name: Install sea-orm-cli
-        run: cargo install sea-orm-cli --version 1.1.1 --locked
 
       - name: Run migrations
         run: cargo loco db migrate

@@ -134,9 +134,13 @@ mod tests {
             .to_str()
             .unwrap()
             .to_string();
-        assert!(ct.contains("application/json"));
+        assert!(ct.contains("application/activity+json"), "{ct}");
 
         let body: serde_json::Value = response.json();
+        assert_eq!(
+            body["@context"],
+            serde_json::json!(taverna::federation::protocol::AP_CONTEXT)
+        );
         assert_eq!(body["type"], "Person");
         assert_eq!(body["preferredUsername"], "feduser");
         assert!(body["publicKey"].is_object());
@@ -265,7 +269,9 @@ mod tests {
         }
         let body: serde_json::Value = serde_json::from_str(&body_text).unwrap();
         assert_eq!(body["type"], "Note");
-        assert_eq!(body["content"], "A test comment");
+        // `content` is HTML (ActivityPub); the markdown travels in `source`.
+        assert_eq!(body["content"], "<p>A test comment</p>\n");
+        assert_eq!(body["source"]["content"], "A test comment");
         assert_eq!(body["inReplyTo"], post.ap_id);
     }
 
@@ -299,7 +305,7 @@ mod tests {
         let body: serde_json::Value = response.json();
         assert_eq!(body["version"], "2.0");
         assert_eq!(body["software"]["name"], "taverna");
-        assert_eq!(body["software"]["version"], "0.1.0");
+        assert_eq!(body["software"]["version"], env!("CARGO_PKG_VERSION"));
         assert!(
             body["protocols"]
                 .as_array()
@@ -428,7 +434,18 @@ mod tests {
         setup();
         let (request, ctx) = crate::common::test_server_and_ctx().await;
         let user = create_test_user(&ctx.db).await;
-        let _community = create_test_community(&ctx.db, user.id).await;
+        let community = create_test_community(&ctx.db, user.id).await;
+        PostModel::create(
+            &ctx.db,
+            Some(community.id),
+            user.id,
+            "Outbox post",
+            Some("**bold**"),
+            None,
+            BASE_URL,
+        )
+        .await
+        .unwrap();
 
         let response = request
             .get("/c/fed-community/outbox")
@@ -438,6 +455,20 @@ mod tests {
 
         let body: serde_json::Value = response.json();
         assert_eq!(body["type"], "OrderedCollection");
+        assert_eq!(body["totalItems"], 1);
+        let item = &body["orderedItems"][0];
+        assert_eq!(item["type"], "Announce");
+        assert_eq!(item["actor"], community.ap_id);
+        // The announced Note stays attributed to its author and carries
+        // rendered HTML, with the markdown in `source`.
+        assert_eq!(item["object"]["attributedTo"], user.ap_id);
+        assert!(
+            item["object"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("<strong>bold</strong>")
+        );
+        assert_eq!(item["object"]["source"]["content"], "**bold**");
     }
 
     // ── Phase 8: remote content cache ────────────────────────

@@ -1,4 +1,4 @@
-use crate::models::_entities::{instance_settings, users};
+use crate::models::_entities::users;
 use sea_orm::{DatabaseConnection, EntityTrait};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -17,23 +17,7 @@ pub async fn check_eligibility(
     db: &DatabaseConnection,
     user_id: uuid::Uuid,
 ) -> Result<EligibilityResult, sea_orm::DbErr> {
-    let settings = instance_settings::Entity::find()
-        .one(db)
-        .await?
-        .unwrap_or_else(|| instance_settings::Model {
-            id: true,
-            community_creation_open: true,
-            require_min_account_age: false,
-            min_account_age_days: 30,
-            require_email_verified: false,
-            require_min_standing: false,
-            min_standing_score: 0,
-            disqualify_if_content_removed: false,
-            disqualify_if_suspended: false,
-            instance_name: "Taverna".to_string(),
-            open_registrations: true,
-            updated_at: chrono::DateTime::default(),
-        });
+    let settings = crate::models::instance_settings::load(db).await?;
 
     if settings.community_creation_open {
         return Ok(EligibilityResult {

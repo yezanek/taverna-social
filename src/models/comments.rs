@@ -1,6 +1,6 @@
-use crate::models::_entities::{comments, communities, posts, votes};
+use crate::models::_entities::{comments, communities, posts};
 use crate::models::feed::{Cursor, Page};
-use sea_orm::sea_query::{Expr, Value};
+use sea_orm::sea_query::{Expr, ExprTrait, Value};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
     QueryFilter, QueryOrder, QueryResult, QuerySelect, Set, Statement, TransactionTrait,
@@ -9,8 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::instrument;
 use uuid::Uuid;
-
-use chrono;
 
 const COMMENT_SELECT: &str = "SELECT id, ap_id, post_id, author_id, parent_id, CAST(path AS TEXT) AS path, body, score, is_deleted, is_removed, published_at, created_at, updated_at FROM comments";
 
@@ -129,35 +127,33 @@ impl CommentModel {
             r#"INSERT INTO comments (id, ap_id, post_id, author_id, parent_id, path, body, score, is_deleted, is_removed, published_at, created_at, updated_at)
                VALUES ($1, $2, $3, $4, $5, CAST($6 AS ltree), $7, $8, $9, $10, $11, $12, $13)"#,
             vec![
-                Value::Uuid(Some(Box::new(id))),
-                Value::String(Some(Box::new(ap_id))),
-                Value::Uuid(Some(Box::new(post_id))),
-                Value::Uuid(Some(Box::new(author_id))),
-                Value::Uuid(parent_id.map(Box::new)),
-                Value::String(Some(Box::new(path))),
-                Value::String(Some(Box::new(body.to_string()))),
+                Value::from(id),
+                Value::from(ap_id),
+                Value::from(post_id),
+                Value::from(author_id),
+                Value::from(parent_id),
+                Value::from(path),
+                Value::from(body.to_string()),
                 Value::Int(Some(0)),
                 Value::Bool(Some(false)),
                 Value::Bool(Some(false)),
-                Value::ChronoDateTimeUtc(Some(Box::new(now))),
-                Value::ChronoDateTimeUtc(Some(Box::new(now))),
-                Value::ChronoDateTimeUtc(Some(Box::new(now))),
+                Value::from(now),
+                Value::from(now),
+                Value::from(now),
             ],
         );
 
-        txn.execute(stmt).await?;
+        txn.execute_raw(stmt).await?;
 
-        let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
-            .one(&txn)
-            .await?
-            .ok_or(CommentError::NotFound)?
-            .into();
-        let current = post
-            .comment_count
-            .take()
-            .ok_or_else(|| sea_orm::DbErr::Custom("Comment count is missing".to_string()))?;
-        post.comment_count = Set(current + 1);
-        post.update(&txn).await?;
+        // Increment in SQL so concurrent comments cannot lose an update.
+        posts::Entity::update_many()
+            .col_expr(
+                posts::Column::CommentCount,
+                Expr::col(posts::Column::CommentCount).add(1),
+            )
+            .filter(posts::Column::Id.eq(post_id))
+            .exec(&txn)
+            .await?;
 
         txn.commit().await?;
 
@@ -181,10 +177,10 @@ impl CommentModel {
                 COMMENT_SELECT
             )
             .as_str(),
-            vec![Value::Uuid(Some(Box::new(post_id)))],
+            vec![Value::from(post_id)],
         );
 
-        let rows = db.query_all(stmt).await?;
+        let rows = db.query_all_raw(stmt).await?;
         rows_to_comments(rows)
     }
 
@@ -204,37 +200,36 @@ impl CommentModel {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!("{} WHERE id = $1", COMMENT_SELECT).as_str(),
-            vec![Value::Uuid(Some(Box::new(id)))],
+            vec![Value::from(id)],
         );
 
-        let rows = db.query_all(stmt).await?;
+        let rows = db.query_all_raw(stmt).await?;
         opt_row_to_comment(rows)
     }
 
-    /// Recalculates the score of a comment by summing all vote values.
+    /// Recalculates the score of a comment from its votes in one statement.
     #[instrument(skip(db))]
     pub async fn recalculate_score(
         db: &DatabaseConnection,
         comment_id: Uuid,
-    ) -> Result<i32, sea_orm::DbErr> {
-        let all_votes = votes::Entity::find()
-            .filter(votes::Column::CommentId.eq(comment_id))
-            .all(db)
+    ) -> Result<(), sea_orm::DbErr> {
+        let result = comments::Entity::update_many()
+            .col_expr(
+                comments::Column::Score,
+                Expr::cust_with_values(
+                    "(SELECT COALESCE(SUM(value), 0) FROM votes WHERE comment_id = $1)",
+                    [comment_id],
+                ),
+            )
+            .filter(comments::Column::Id.eq(comment_id))
+            .exec(db)
             .await?;
-        let score: i32 = all_votes.iter().map(|v| v.value as i32).sum();
-
-        let mut comment: comments::ActiveModel = comments::Entity::find_by_id(comment_id)
-            .one(db)
-            .await?
-            .ok_or(sea_orm::DbErr::RecordNotFound(
+        if result.rows_affected == 0 {
+            return Err(sea_orm::DbErr::RecordNotFound(
                 "Comment not found".to_string(),
-            ))?
-            .into();
-        comment.score = Set(score);
-        comment.updated_at = Set(chrono::Utc::now().into());
-        comment.update(db).await?;
-
-        Ok(score)
+            ));
+        }
+        Ok(())
     }
 
     /// Lists non-deleted comments by a specific author, newest first,
@@ -363,7 +358,12 @@ impl CommentModel {
         comment.updated_at = Set(chrono::Utc::now().into());
         comment.update(db).await?;
 
-        let _ = crate::models::users::UserModel::update_standing(db, author_id, -5).await;
+        crate::models::users::UserModel::update_standing(
+            db,
+            author_id,
+            crate::models::posts::REMOVAL_STANDING_PENALTY,
+        )
+        .await?;
 
         Ok(())
     }

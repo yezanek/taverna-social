@@ -11,7 +11,7 @@ logger:
 server:
   port: 3000
   binding: 0.0.0.0
-  host: {{ get_env(name="BASE_URL", default="https://taverna.example.com") }}
+  host: <%= get_env(name="BASE_URL", default="https://taverna.example.com") %>
   middlewares:
     # gzip/brotli for HTML and JSON responses. If Caddy already does
     # `encode gzip zstd` (see DEPLOY.md) this can be turned off.
@@ -32,12 +32,12 @@ workers:
 mailer:
   smtp:
     enable: true
-    host: {{ get_env(name="SMTP_HOST", default="localhost") }}
+    host: <%= get_env(name="SMTP_HOST", default="localhost") %>
     port: 587
     secure: true
 
 database:
-  uri: {{ get_env(name="DATABASE_URL") }}
+  uri: <%= get_env(name="DATABASE_URL") %>
   enable_logging: false
   # Sized for several thousand concurrent users (PHASE_8.md B3).
   # Times are in milliseconds. Loco has no max-lifetime setting; sqlx's
@@ -53,7 +53,7 @@ database:
 
 auth:
   jwt:
-    secret: {{ get_env(name="JWT_SECRET") }}
+    secret: <%= get_env(name="JWT_SECRET") %>
     expiration: 3600
     location:
       from: Cookie

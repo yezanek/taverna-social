@@ -7,9 +7,13 @@ use sea_orm::{
     FromQueryResult, QueryFilter, Set, Statement,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::OnceCell;
 use tracing::instrument;
 use url::Url;
 
+use crate::common::config::TavernaConfig;
+use crate::federation::TavernaFederation;
 use crate::federation::activities::SendActivity;
 use crate::federation::traits::{DbCommunity, DbUser};
 use crate::models::_entities::{communities, outbound_activities, users};
@@ -20,13 +24,36 @@ pub struct DeliverActivityArgs {
 }
 
 pub struct DeliverActivityWorker {
-    pub db: DatabaseConnection,
+    db: DatabaseConnection,
+    /// The app's federation config from Loco's shared store, so deliveries
+    /// share one HTTP client and its keep-alive connections (Phase 8, B6).
+    /// Built from the environment on first use if the store has none.
+    federation: Arc<OnceCell<TavernaFederation>>,
+}
+
+impl DeliverActivityWorker {
+    #[must_use]
+    pub fn new(db: DatabaseConnection, federation: Option<TavernaFederation>) -> Self {
+        Self {
+            db,
+            federation: Arc::new(OnceCell::new_with(federation)),
+        }
+    }
+
+    async fn federation_config(&self) -> Result<&TavernaFederation> {
+        self.federation
+            .get_or_try_init(|| async {
+                let taverna = TavernaConfig::from_env()?;
+                Ok(crate::federation::build_config(self.db.clone(), &taverna.domain).await?)
+            })
+            .await
+    }
 }
 
 #[async_trait]
 impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
     fn build(ctx: &AppContext) -> Self {
-        Self { db: ctx.db.clone() }
+        Self::new(ctx.db.clone(), ctx.shared_store.get::<TavernaFederation>())
     }
 
     #[instrument(skip(self))]
@@ -60,20 +87,11 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
             json: activity_json.clone(),
         };
 
-        // Build DomainConfig using env vars
-        let domain = std::env::var("TAVERNA_DOMAIN")
-            .or_else(|_| std::env::var("DOMAIN"))
-            .unwrap_or_else(|_| "localhost:3000".to_string());
-
-        let federation_config = activitypub_federation::config::FederationConfig::builder()
-            .domain(&domain)
-            .app_data(self.db.clone())
-            .debug(cfg!(debug_assertions))
-            .build()
+        let data = self
+            .federation_config()
             .await
-            .map_err(|e| loco_rs::Error::string(&format!("Federation config error: {}", e)))?;
-
-        let data = federation_config.to_request_data();
+            .map_err(|e| loco_rs::Error::string(&format!("Federation config error: {e:#}")))?
+            .to_request_data();
 
         let signer = match resolve_signer(&self.db, &row.actor_ap_id).await {
             Ok(signer) => signer,
@@ -82,7 +100,8 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
             }
         };
 
-        let mut any_failed = false;
+        // Inboxes that could not be reached; only these are retried.
+        let mut failed: Vec<String> = Vec::new();
         for inbox_str in &row.target_inboxes {
             let inbox_url = match Url::parse(inbox_str) {
                 Ok(u) => u,
@@ -104,24 +123,34 @@ impl BackgroundWorker<DeliverActivityArgs> for DeliverActivityWorker {
                 Ok(tasks) => tasks,
                 Err(e) => {
                     tracing::warn!("Failed to prepare delivery to {}: {:#}", inbox_str, e);
-                    any_failed = true;
+                    failed.push(inbox_str.clone());
                     continue;
                 }
             };
 
+            let mut delivered = true;
             for task in &tasks {
-                match task.sign_and_send(&data).await {
-                    Ok(_) => tracing::info!("Delivered to {}", inbox_str),
-                    Err(e) => {
-                        tracing::warn!("Failed to deliver to {}: {:#}", inbox_str, e);
-                        any_failed = true;
-                    }
+                if let Err(e) = task.sign_and_send(&data).await {
+                    tracing::warn!("Failed to deliver to {}: {:#}", inbox_str, e);
+                    delivered = false;
                 }
+            }
+            if delivered {
+                tracing::info!("Delivered to {}", inbox_str);
+            } else {
+                failed.push(inbox_str.clone());
             }
         }
 
-        if any_failed {
-            return update_failure(&self.db, &row, anyhow::anyhow!("Some deliveries failed")).await;
+        if !failed.is_empty() {
+            let error = anyhow::anyhow!(
+                "{} of {} deliveries failed",
+                failed.len(),
+                row.target_inboxes.len()
+            );
+            let mut retry = row.clone();
+            retry.target_inboxes = failed;
+            return update_failure(&self.db, &retry, error).await;
         }
 
         mark_sent(&self.db, &row).await
@@ -161,6 +190,8 @@ async fn update_failure(
     error: anyhow::Error,
 ) -> LocoResult<()> {
     let mut active: outbound_activities::ActiveModel = row.clone().into();
+    // `row` may carry a narrowed inbox list (see `perform`); persist it.
+    active.target_inboxes = Set(row.target_inboxes.clone());
     let new_attempts = row.attempts + 1;
     active.attempts = Set(new_attempts);
     let error_str = format!("{:#}", error);
@@ -247,7 +278,7 @@ const DISPATCH_LEASE_SECONDS: i64 = 300;
 pub async fn dispatch_due(ctx: &AppContext, batch_size: u64) -> Result<usize> {
     let db = &ctx.db;
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             r#"
             UPDATE outbound_activities

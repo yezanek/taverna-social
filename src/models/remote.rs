@@ -5,7 +5,7 @@
 //! local `users`, `posts` or `comments` tables, except bumping a local post's
 //! `comment_count` when a remote reply to it arrives.
 use chrono::{Duration, Utc};
-use sea_orm::sea_query::{Expr, OnConflict};
+use sea_orm::sea_query::{Expr, ExprTrait, OnConflict};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder,
     Set, Statement,
@@ -15,7 +15,9 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::federation::protocol::{Note, RemoteActorJson};
-use crate::models::_entities::{comments, posts, remote_actors, remote_comments, remote_posts};
+use crate::models::_entities::{
+    comments, posts, received_activities, remote_actors, remote_comments, remote_posts,
+};
 
 /// How long a fetched remote actor is considered fresh.
 pub const ACTOR_TTL_DAYS: i64 = 1;
@@ -502,13 +504,25 @@ pub async fn record_received_activity(
     activity_ap_id: &str,
 ) -> Result<bool, DbErr> {
     let res = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO received_activities (ap_id) VALUES ($1) ON CONFLICT (ap_id) DO NOTHING",
             [activity_ap_id.into()],
         ))
         .await?;
     Ok(res.rows_affected() == 1)
+}
+
+/// Removes `activity_ap_id` from the received set, so a retry is processed.
+pub async fn forget_received_activity(
+    db: &DatabaseConnection,
+    activity_ap_id: &str,
+) -> Result<(), DbErr> {
+    received_activities::Entity::delete_many()
+        .filter(received_activities::Column::ApId.eq(activity_ap_id))
+        .exec(db)
+        .await?;
+    Ok(())
 }
 
 /// Deletes expired rows from the remote cache. Never touches local tables.
@@ -533,7 +547,7 @@ pub async fn expire_remote_cache(db: &DatabaseConnection) -> Result<(u64, u64, u
     // Actors are shared across content; only remove ones nothing references,
     // including follows and votes (which would otherwise cascade away).
     let actors_deleted = db
-        .execute(Statement::from_string(
+        .execute_raw(Statement::from_string(
             db.get_database_backend(),
             r#"
             DELETE FROM remote_actors ra
@@ -550,7 +564,7 @@ pub async fn expire_remote_cache(db: &DatabaseConnection) -> Result<(u64, u64, u
         .rows_affected();
 
     let received_deleted = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "DELETE FROM received_activities WHERE received_at < $1",
             [(Utc::now() - Duration::days(RECEIVED_ACTIVITY_TTL_DAYS)).into()],

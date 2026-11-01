@@ -32,20 +32,22 @@ impl Voter<'_> {
     }
 }
 
+/// Errors from casting or removing a vote.
+#[derive(Debug, thiserror::Error)]
+pub enum VoteError {
+    #[error("Vote must be 1 or -1")]
+    InvalidValue,
+    #[error("Users cannot vote on their own content")]
+    OwnContent,
+    #[error("Vote target not found")]
+    NotFound,
+    #[error(transparent)]
+    Db(#[from] sea_orm::DbErr),
+}
+
 pub struct VoteModel;
 
 impl VoteModel {
-    /// Deletes a user's vote on a post or comment.
-    #[instrument(skip(db))]
-    pub async fn delete_vote(
-        db: &DatabaseConnection,
-        user_id: Uuid,
-        post_id: Option<Uuid>,
-        comment_id: Option<Uuid>,
-    ) -> Result<(), sea_orm::DbErr> {
-        Self::delete_by(db, Voter::Local(user_id), post_id, comment_id).await
-    }
-
     /// Deletes a remote actor's vote (Undo{Like}/Undo{Dislike}).
     #[instrument(skip(db))]
     pub async fn delete_remote_vote(
@@ -53,12 +55,13 @@ impl VoteModel {
         actor_ap_id: &str,
         post_id: Option<Uuid>,
         comment_id: Option<Uuid>,
-    ) -> Result<(), sea_orm::DbErr> {
+    ) -> Result<(), VoteError> {
         Self::delete_by(db, Voter::Remote(actor_ap_id), post_id, comment_id).await
     }
 
     /// Casts or toggles a vote (upvote/downvote) on a post or comment.
-    /// Returns whether the vote was Added, Changed, or Removed.
+    /// Returns whether the vote was Added, Changed, or Removed. Users cannot
+    /// vote on their own posts or comments (SPEC §3.2).
     #[instrument(skip(db))]
     pub async fn cast_vote(
         db: &DatabaseConnection,
@@ -66,7 +69,7 @@ impl VoteModel {
         post_id: Option<Uuid>,
         comment_id: Option<Uuid>,
         value: i16,
-    ) -> Result<VoteAction, sea_orm::DbErr> {
+    ) -> Result<VoteAction, VoteError> {
         Self::cast_by(db, Voter::Local(user_id), post_id, comment_id, value).await
     }
 
@@ -79,7 +82,7 @@ impl VoteModel {
         post_id: Option<Uuid>,
         comment_id: Option<Uuid>,
         value: i16,
-    ) -> Result<VoteAction, sea_orm::DbErr> {
+    ) -> Result<VoteAction, VoteError> {
         let voter = Voter::Remote(actor_ap_id);
         if Self::find_existing(db, voter, post_id, comment_id)
             .await?
@@ -95,15 +98,37 @@ impl VoteModel {
         voter: Voter<'_>,
         post_id: Option<Uuid>,
         comment_id: Option<Uuid>,
-    ) -> Result<Option<votes::Model>, sea_orm::DbErr> {
+    ) -> Result<Option<votes::Model>, VoteError> {
         let query = votes::Entity::find().filter(voter.filter());
-        match (post_id, comment_id) {
-            (Some(pid), None) => query.filter(votes::Column::PostId.eq(pid)).one(db).await,
-            (None, Some(cid)) => query.filter(votes::Column::CommentId.eq(cid)).one(db).await,
-            _ => Err(sea_orm::DbErr::Custom(
-                "Exactly one of post_id or comment_id must be set".to_string(),
-            )),
-        }
+        let query = match (post_id, comment_id) {
+            (Some(pid), None) => query.filter(votes::Column::PostId.eq(pid)),
+            (None, Some(cid)) => query.filter(votes::Column::CommentId.eq(cid)),
+            _ => {
+                return Err(sea_orm::DbErr::Custom(
+                    "Exactly one of post_id or comment_id must be set".to_string(),
+                )
+                .into());
+            }
+        };
+        Ok(query.one(db).await?)
+    }
+
+    /// The author of the voted-on post or comment.
+    async fn target_author(
+        db: &DatabaseConnection,
+        post_id: Option<Uuid>,
+        comment_id: Option<Uuid>,
+    ) -> Result<Uuid, VoteError> {
+        let author = match (post_id, comment_id) {
+            (Some(pid), None) => crate::models::posts::PostModel::find_by_id(db, pid)
+                .await?
+                .map(|p| p.author_id),
+            (None, Some(cid)) => crate::models::comments::CommentModel::find_by_id(db, cid)
+                .await?
+                .map(|c| c.author_id),
+            _ => None,
+        };
+        author.ok_or(VoteError::NotFound)
     }
 
     async fn delete_by(
@@ -111,10 +136,27 @@ impl VoteModel {
         voter: Voter<'_>,
         post_id: Option<Uuid>,
         comment_id: Option<Uuid>,
-    ) -> Result<(), sea_orm::DbErr> {
+    ) -> Result<(), VoteError> {
         if let Some(vote) = Self::find_existing(db, voter, post_id, comment_id).await? {
+            let author_id = Self::target_author(db, post_id, comment_id).await?;
             votes::Entity::delete_by_id(vote.id).exec(db).await?;
             Self::recalculate_after_vote(db, post_id, comment_id).await?;
+            // SPEC §3.7: standing changes are reversed when a vote is removed.
+            Self::adjust_standing(db, voter, author_id, -i32::from(vote.value)).await?;
+        }
+        Ok(())
+    }
+
+    /// Applies a vote's effect on the author's standing score. Votes a user
+    /// casts on their own content never count.
+    async fn adjust_standing(
+        db: &DatabaseConnection,
+        voter: Voter<'_>,
+        author_id: Uuid,
+        delta: i32,
+    ) -> Result<(), VoteError> {
+        if delta != 0 && !voter.is_local_user(author_id) {
+            crate::models::users::UserModel::update_standing(db, author_id, delta).await?;
         }
         Ok(())
     }
@@ -125,75 +167,49 @@ impl VoteModel {
         post_id: Option<Uuid>,
         comment_id: Option<Uuid>,
         value: i16,
-    ) -> Result<VoteAction, sea_orm::DbErr> {
+    ) -> Result<VoteAction, VoteError> {
         if value != 1 && value != -1 {
-            return Err(sea_orm::DbErr::Custom("Vote must be 1 or -1".to_string()));
+            return Err(VoteError::InvalidValue);
         }
-        let existing = Self::find_existing(db, voter, post_id, comment_id).await?;
+        let author_id = Self::target_author(db, post_id, comment_id).await?;
+        if voter.is_local_user(author_id) {
+            return Err(VoteError::OwnContent);
+        }
 
-        let author_id = if let Some(pid) = post_id {
-            crate::models::posts::PostModel::find_by_id(db, pid)
-                .await
-                .ok()
-                .flatten()
-                .map(|p| p.author_id)
-        } else if let Some(cid) = comment_id {
-            crate::models::comments::CommentModel::find_by_id(db, cid)
-                .await
-                .ok()
-                .flatten()
-                .map(|c| c.author_id)
-        } else {
-            None
-        };
-
-        let (result, old_val) = if let Some(existing_vote) = existing {
-            let old = existing_vote.value;
-            if old == value {
-                votes::Entity::delete_by_id(existing_vote.id)
-                    .exec(db)
-                    .await?;
-                Self::recalculate_after_vote(db, post_id, comment_id).await?;
-                (VoteAction::Removed, old)
-            } else {
-                let mut active: votes::ActiveModel = existing_vote.into();
+        let (result, delta) = match Self::find_existing(db, voter, post_id, comment_id).await? {
+            Some(existing) if existing.value == value => {
+                votes::Entity::delete_by_id(existing.id).exec(db).await?;
+                (VoteAction::Removed, -i32::from(value))
+            }
+            Some(existing) => {
+                let delta = i32::from(value - existing.value);
+                let mut active: votes::ActiveModel = existing.into();
                 active.value = Set(value);
                 active.update(db).await?;
-                Self::recalculate_after_vote(db, post_id, comment_id).await?;
-                (VoteAction::Changed, old)
+                (VoteAction::Changed, delta)
             }
-        } else {
-            let (user_id, remote_actor_ap_id) = match voter {
-                Voter::Local(id) => (Some(id), None),
-                Voter::Remote(ap_id) => (None, Some(ap_id.to_string())),
-            };
-            votes::ActiveModel {
-                id: Set(Uuid::new_v4()),
-                user_id: Set(user_id),
-                remote_actor_ap_id: Set(remote_actor_ap_id),
-                post_id: Set(post_id),
-                comment_id: Set(comment_id),
-                value: Set(value),
-                created_at: Set(chrono::Utc::now().into()),
+            None => {
+                let (user_id, remote_actor_ap_id) = match voter {
+                    Voter::Local(id) => (Some(id), None),
+                    Voter::Remote(ap_id) => (None, Some(ap_id.to_string())),
+                };
+                votes::ActiveModel {
+                    id: Set(Uuid::new_v4()),
+                    user_id: Set(user_id),
+                    remote_actor_ap_id: Set(remote_actor_ap_id),
+                    post_id: Set(post_id),
+                    comment_id: Set(comment_id),
+                    value: Set(value),
+                    created_at: Set(chrono::Utc::now().into()),
+                }
+                .insert(db)
+                .await?;
+                (VoteAction::Added, i32::from(value))
             }
-            .insert(db)
-            .await?;
-
-            Self::recalculate_after_vote(db, post_id, comment_id).await?;
-            (VoteAction::Added, value)
         };
 
-        if let Some(aid) = author_id
-            && !voter.is_local_user(aid)
-        {
-            let delta = match result {
-                VoteAction::Added => value as i32,
-                VoteAction::Changed => (value - old_val) as i32,
-                VoteAction::Removed => -(old_val as i32),
-            };
-            let _ = crate::models::users::UserModel::update_standing(db, aid, delta).await;
-        }
-
+        Self::recalculate_after_vote(db, post_id, comment_id).await?;
+        Self::adjust_standing(db, voter, author_id, delta).await?;
         Ok(result)
     }
 

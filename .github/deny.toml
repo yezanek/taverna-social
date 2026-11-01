@@ -22,19 +22,17 @@ allow = [
     "OpenSSL",
     "Zlib",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "0BSD",
+    "CDLA-Permissive-2.0",
+    "AGPL-3.0-or-later", # Taverna itself
+    "GPL-3.0",           # activitystreams-kinds; GPL-3.0 code may be combined with AGPL-3.0
 ]
 
-# Fail on any license not in the allow list
-unlicensed = "deny"
-copyleft = "warn"       # warn on copyleft other than AGPL/LGPL (already in allow)
-allow-osi-fsf-free = "neither"
-default = "deny"
+# Any license not in the allow list is rejected (cargo-deny >= 0.14).
 confidence-threshold = 0.8
 
-exceptions = [
-    # ring uses a custom OpenSSL-derived license — safe for our use
-    { allow = ["OpenSSL"], name = "ring" },
-]
+exceptions = []
 
 [bans]
 # Deny duplicate versions of these critical crates
@@ -54,16 +52,10 @@ skip-tree = []
 # Fail on any known security vulnerability
 version = 2
 ignore = [
-    # RUSTSEC-2025-0057: fxhash is unmaintained but still used by
-    # selectors → scraper → loco-rs (transitive). No known CVE.
-    # The maintained fork rustc-hash has a different lib name so a
-    # straight [patch] won't work without upstream changes.
-    "RUSTSEC-2025-0057",
-    # The entries below mirror .cargo/audit.toml; see the reasons there.
+    # These mirror .cargo/audit.toml; see the reasons there.
     "RUSTSEC-2024-0449", # unsafe-libyaml unmaintained (serde_yaml -> loco-rs)
     "RUSTSEC-2023-0071", # rsa Marvin, no fixed release (activitypub_federation)
-    "RUSTSEC-2026-0194", # quick-xml 0.38 (opendal -> loco-rs), fix needs 0.41
-    "RUSTSEC-2026-0195", # quick-xml 0.38 (opendal -> loco-rs), fix needs 0.41
+    "RUSTSEC-2026-0387", # crypto-bigint 0.5 (p256/p384 -> jsonwebtoken), HS256 only
 ]
 
 [sources]

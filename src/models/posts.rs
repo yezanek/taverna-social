@@ -1,4 +1,4 @@
-use crate::models::_entities::{posts, posts::ActiveModel, votes};
+use crate::models::_entities::{posts, posts::ActiveModel};
 use crate::models::community_bans::Entity as CommunityBans;
 use crate::models::feed::{Cursor, Page};
 use sea_orm::sea_query::Expr;
@@ -25,6 +25,59 @@ pub enum PostError {
     Other(#[from] anyhow::Error),
 }
 
+/// Maximum post title length, in characters.
+const MAX_TITLE_CHARS: usize = 300;
+
+/// Standing penalty applied when a moderator removes content (SPEC §3.7).
+pub const REMOVAL_STANDING_PENALTY: i32 = -5;
+
+/// Trims `s`, treating a blank string as absent.
+fn non_blank(s: Option<&str>) -> Option<&str> {
+    s.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Title, body and link of a post after trimming and validation.
+struct PostContent {
+    title: String,
+    body: Option<String>,
+    url: Option<String>,
+}
+
+impl PostContent {
+    /// Trims the fields, treats blank body/URL as absent, and enforces
+    /// SPEC §3.2: a 1-300 character title, an http(s) link if any, and at
+    /// least one of body or link.
+    fn validate(title: &str, body: Option<&str>, url: Option<&str>) -> Result<Self, PostError> {
+        let title = title.trim();
+        if title.is_empty() || title.chars().count() > MAX_TITLE_CHARS {
+            return Err(PostError::Validation(
+                "Title must be 1-300 characters".to_string(),
+            ));
+        }
+        let body = non_blank(body);
+        let url = non_blank(url);
+        if let Some(u) = url {
+            let parsed = Url::parse(u)
+                .map_err(|_| PostError::Validation("Invalid URL format".to_string()))?;
+            if !matches!(parsed.scheme(), "http" | "https") {
+                return Err(PostError::Validation(
+                    "URL must use http or https scheme".to_string(),
+                ));
+            }
+        }
+        if body.is_none() && url.is_none() {
+            return Err(PostError::Validation(
+                "Post must have body or URL".to_string(),
+            ));
+        }
+        Ok(Self {
+            title: title.to_string(),
+            body: body.map(str::to_string),
+            url: url.map(str::to_string),
+        })
+    }
+}
+
 pub struct PostModel;
 
 impl PostModel {
@@ -41,29 +94,7 @@ impl PostModel {
         url: Option<&str>,
         base_url: &str,
     ) -> Result<posts::Model, PostError> {
-        let title = title.trim();
-        if title.is_empty() || title.len() > 300 {
-            return Err(PostError::Validation(
-                "Title must be 1-300 characters".to_string(),
-            ));
-        }
-        let body_effective = body.map(|s| s.trim()).filter(|s| !s.is_empty());
-        let url_effective = url.map(|s| s.trim()).filter(|s| !s.is_empty());
-        if let Some(u) = &url_effective {
-            let parsed = Url::parse(u)
-                .map_err(|_| PostError::Validation("Invalid URL format".to_string()))?;
-            let scheme = parsed.scheme();
-            if scheme != "http" && scheme != "https" {
-                return Err(PostError::Validation(
-                    "URL must use http or https scheme".to_string(),
-                ));
-            }
-        }
-        if body_effective.is_none() && url_effective.is_none() {
-            return Err(PostError::Validation(
-                "Post must have body or URL".to_string(),
-            ));
-        }
+        let content = PostContent::validate(title, body, url)?;
 
         if let Some(cid) = community_id {
             let banned = CommunityBans::is_banned(db, cid, author_id).await?;
@@ -81,9 +112,9 @@ impl PostModel {
             ap_id: Set(ap_id),
             community_id: Set(community_id),
             author_id: Set(author_id),
-            title: Set(title.to_string()),
-            body: Set(body.map(|s| s.to_string())),
-            url: Set(url.map(|s| s.to_string())),
+            title: Set(content.title),
+            body: Set(content.body),
+            url: Set(content.url),
             score: Set(0),
             comment_count: Set(0),
             is_deleted: Set(false),
@@ -151,27 +182,27 @@ impl PostModel {
         }))
     }
 
-    /// Recalculates the score of a post by summing all vote values.
+    /// Recalculates the score of a post from its votes, in one statement so
+    /// concurrent votes cannot overwrite each other's result.
     #[instrument(skip(db))]
     pub async fn recalculate_score(
         db: &DatabaseConnection,
         post_id: Uuid,
     ) -> Result<i32, sea_orm::DbErr> {
-        let all_votes = votes::Entity::find()
-            .filter(votes::Column::PostId.eq(post_id))
-            .all(db)
-            .await?;
-        let score: i32 = all_votes.iter().map(|v| v.value as i32).sum();
-
-        let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
-            .one(db)
+        posts::Entity::update_many()
+            .col_expr(
+                posts::Column::Score,
+                Expr::cust_with_values(
+                    "(SELECT COALESCE(SUM(value), 0) FROM votes WHERE post_id = $1)",
+                    [post_id],
+                ),
+            )
+            .filter(posts::Column::Id.eq(post_id))
+            .exec_with_returning(db)
             .await?
-            .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?
-            .into();
-        post.score = Set(score);
-        post.update(db).await?;
-
-        Ok(score)
+            .first()
+            .map(|p| p.score)
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("Post not found".to_string()))
     }
 
     /// Marks a post as deleted (soft delete — retains the row).
@@ -201,7 +232,8 @@ impl PostModel {
         post.updated_at = Set(chrono::Utc::now().into());
         post.update(db).await?;
 
-        let _ = crate::models::users::UserModel::update_standing(db, author_id, -5).await;
+        crate::models::users::UserModel::update_standing(db, author_id, REMOVAL_STANDING_PENALTY)
+            .await?;
 
         Ok(())
     }
@@ -216,8 +248,8 @@ impl PostModel {
             .one(db)
             .await?
             .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?;
+        let new_pinned = !post.is_pinned;
         let mut active: posts::ActiveModel = post.into();
-        let new_pinned = !active.is_pinned.take().unwrap_or(false);
         active.is_pinned = Set(new_pinned);
         active.updated_at = Set(chrono::Utc::now().into());
         active.update(db).await?;
@@ -234,8 +266,8 @@ impl PostModel {
             .one(db)
             .await?
             .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?;
+        let new_locked = !post.is_locked;
         let mut active: posts::ActiveModel = post.into();
-        let new_locked = !active.is_locked.take().unwrap_or(false);
         active.is_locked = Set(new_locked);
         active.updated_at = Set(chrono::Utc::now().into());
         active.update(db).await?;
@@ -251,62 +283,17 @@ impl PostModel {
         body: Option<&str>,
         url: Option<&str>,
     ) -> Result<posts::Model, PostError> {
-        let title = title.trim();
-        if title.is_empty() || title.len() > 300 {
-            return Err(PostError::Validation(
-                "Title must be 1-300 characters".to_string(),
-            ));
-        }
-        let body_effective = body.map(|s| s.trim()).filter(|s| !s.is_empty());
-        let url_effective = url.map(|s| s.trim()).filter(|s| !s.is_empty());
-        if let Some(u) = &url_effective {
-            let parsed = Url::parse(u)
-                .map_err(|_| PostError::Validation("Invalid URL format".to_string()))?;
-            let scheme = parsed.scheme();
-            if scheme != "http" && scheme != "https" {
-                return Err(PostError::Validation(
-                    "URL must use http or https scheme".to_string(),
-                ));
-            }
-        }
-        if body_effective.is_none() && url_effective.is_none() {
-            return Err(PostError::Validation(
-                "Post must have body or URL".to_string(),
-            ));
-        }
+        let content = PostContent::validate(title, body, url)?;
 
         let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
             .one(db)
             .await?
             .ok_or(PostError::NotFound)?
             .into();
-        post.title = Set(title.to_string());
-        post.body = Set(body_effective.map(|s| s.to_string()));
-        post.url = Set(url_effective.map(|s| s.to_string()));
+        post.title = Set(content.title);
+        post.body = Set(content.body);
+        post.url = Set(content.url);
         post.updated_at = Set(chrono::Utc::now().into());
         Ok(post.update(db).await?)
-    }
-
-    /// Atomically increments the comment count on a post.
-    #[instrument(skip(db))]
-    pub async fn increment_comment_count(
-        db: &DatabaseConnection,
-        post_id: Uuid,
-    ) -> Result<(), sea_orm::DbErr> {
-        let mut post: posts::ActiveModel = posts::Entity::find_by_id(post_id)
-            .one(db)
-            .await?
-            .ok_or(sea_orm::DbErr::RecordNotFound("Post not found".to_string()))?
-            .into();
-        let current_count = post
-            .comment_count
-            .take()
-            .ok_or(sea_orm::DbErr::RecordNotFound(
-                "Comment count missing".to_string(),
-            ))?;
-        post.comment_count = Set(current_count + 1);
-        post.updated_at = Set(chrono::Utc::now().into());
-        post.update(db).await?;
-        Ok(())
     }
 }

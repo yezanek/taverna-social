@@ -115,9 +115,25 @@ mod tests {
         assert_eq!(post.title, "A test post");
         assert!(!post.is_deleted);
 
-        // Vote on post (via model directly — upsert logic)
-        let _vote =
+        // Authors cannot vote on their own posts (SPEC §3.2).
+        assert!(
             taverna::models::votes::VoteModel::cast_vote(&ctx.db, user.id, Some(post.id), None, 1)
+                .await
+                .is_err()
+        );
+
+        // Vote on post as another user (via model directly — upsert logic)
+        let voter = UserModel::create_local(
+            &ctx.db,
+            "happyvoter",
+            "happyvoter@example.com",
+            "password123",
+            "http://localhost:5150",
+        )
+        .await
+        .unwrap();
+        let _vote =
+            taverna::models::votes::VoteModel::cast_vote(&ctx.db, voter.id, Some(post.id), None, 1)
                 .await
                 .unwrap();
         let post_votes = votes::Entity::find()

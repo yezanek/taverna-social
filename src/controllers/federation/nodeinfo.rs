@@ -9,6 +9,7 @@ use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
 use crate::models::_entities::{posts, users};
+use crate::models::instance_settings;
 
 struct NodeInfoCache {
     counts: (usize, usize),
@@ -23,11 +24,8 @@ fn cache() -> &'static Mutex<Option<NodeInfoCache>> {
 }
 
 /// Serves the NodeInfo well-known endpoint pointing to the schema URL.
-#[instrument(skip(_ctx, taverna))]
-pub async fn well_known_nodeinfo(
-    State(_ctx): State<AppContext>,
-    Extension(taverna): Extension<TavernaConfig>,
-) -> Result<Response> {
+#[instrument(skip(taverna))]
+pub async fn well_known_nodeinfo(Extension(taverna): Extension<TavernaConfig>) -> Result<Response> {
     let href = format!("{}/nodeinfo/2.0", taverna.base_url.trim_end_matches('/'));
     let link = json!({
         "links": [{
@@ -41,15 +39,14 @@ pub async fn well_known_nodeinfo(
 /// Serves the NodeInfo 2.0 document with usage statistics.
 #[instrument(skip(ctx))]
 pub async fn nodeinfo_v2(State(ctx): State<AppContext>) -> Result<Response> {
-    let (total_users, total_posts) = get_cached_counts(&ctx.db)
-        .await
-        .map_err(|_| Error::InternalServerError)?;
+    let (total_users, total_posts) = get_cached_counts(&ctx.db).await?;
+    let settings = instance_settings::load(&ctx.db).await?;
 
     let info = json!({
         "version": "2.0",
         "software": {
             "name": "taverna",
-            "version": "0.1.0"
+            "version": env!("CARGO_PKG_VERSION")
         },
         "protocols": ["activitypub"],
         "usage": {
@@ -58,7 +55,7 @@ pub async fn nodeinfo_v2(State(ctx): State<AppContext>) -> Result<Response> {
             },
             "localPosts": total_posts
         },
-        "openRegistrations": true
+        "openRegistrations": settings.open_registrations
     });
     Ok(axum::Json(info).into_response())
 }

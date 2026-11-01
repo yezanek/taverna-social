@@ -24,7 +24,7 @@ pub async fn send_verification_email(
         token
     );
 
-    let mut tera = tera::Tera::default();
+    let tera = tera::Tera::default();
     let mut context = Context::new();
     context.insert("username", username);
     context.insert("verify_url", &verify_url);
@@ -46,10 +46,12 @@ pub async fn send_verification_email(
 </body>
 </html>"#,
         &context,
+        true,
     )?;
     let text = tera.render_str(
         "Welcome to Taverna, {{ username }}!\n\nPlease verify your email address by visiting the link below:\n\n{{ verify_url }}\n\nThis link expires in 24 hours.\n\nIf you did not create this account, please ignore this email.",
         &context,
+        false,
     )?;
 
     if ctx.mailer.is_some() {

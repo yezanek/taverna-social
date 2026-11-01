@@ -1,15 +1,19 @@
 use axum::http::StatusCode;
 use axum::{Extension, Form};
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use loco_rs::prelude::*;
-use sea_orm::Set;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::instrument;
 
 use crate::common::config::TavernaConfig;
-use crate::common::jwt::{create_access_token, create_refresh_token};
+use crate::common::jwt::{
+    ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE, TokenKind, create_access_token, create_refresh_token,
+};
+use crate::controllers::csrf;
+use crate::initializers::auth_middleware::{access_cookie, session_cookie};
 use crate::initializers::theme_middleware::CurrentTheme;
+use crate::models::email_verifications;
 use crate::models::users::{UserError, UserModel};
 use crate::views::helpers;
 
@@ -40,13 +44,7 @@ pub async fn register_form(
     jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
     let response = helpers::render_with_theme(
         &v,
         "auth/register.html",
@@ -67,8 +65,19 @@ pub async fn register(
     headers: axum::http::HeaderMap,
     Form(form): Form<RegisterForm>,
 ) -> Result<Response> {
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Ok(StatusCode::FORBIDDEN.into_response());
+    }
+
+    let settings = crate::models::instance_settings::load(&ctx.db).await?;
+    if !settings.open_registrations {
+        return render_with_csrf(
+            &v,
+            jar,
+            "auth/register.html",
+            json!({ "error": "Registrations are closed on this instance" }),
+            &theme,
+        );
     }
 
     if form.password != form.password_confirm {
@@ -85,7 +94,7 @@ pub async fn register(
         );
     }
 
-    if form.password.len() < 8 {
+    if form.password.len() < crate::models::users::MIN_PASSWORD_LEN {
         return render_with_csrf(
             &v,
             jar,
@@ -111,26 +120,26 @@ pub async fn register(
     .await
     {
         Ok(user) => {
-            let token = uuid::Uuid::new_v4().to_string();
-            let _ = crate::models::_entities::email_verifications::ActiveModel {
-                id: Set(uuid::Uuid::new_v4()),
-                user_id: Set(user.id),
-                token: Set(token.clone()),
-                expires_at: Set((chrono::Utc::now() + chrono::Duration::hours(24)).into()),
-                verified_at: Set(None),
-                created_at: Set(chrono::Utc::now().into()),
+            // Registration succeeds even when the mail cannot go out: the
+            // user can resend from their settings page.
+            match email_verifications::issue(&ctx.db, user.id).await {
+                Ok(token) => {
+                    if let Err(e) = crate::mailers::verification::send_verification_email(
+                        &ctx,
+                        &form.email,
+                        &form.username,
+                        &token,
+                        &base_url,
+                    )
+                    .await
+                    {
+                        tracing::warn!(user_id = %user.id, error = %e, "failed to send verification email");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(user_id = %user.id, error = %e, "failed to store verification token");
+                }
             }
-            .insert(&ctx.db)
-            .await;
-
-            let _ = crate::mailers::verification::send_verification_email(
-                &ctx,
-                &form.email,
-                &form.username,
-                &token,
-                &base_url,
-            )
-            .await;
 
             Ok(format::redirect("/login").into_response())
         }
@@ -164,13 +173,7 @@ pub async fn login_form(
     jar: CookieJar,
     Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
     let response = helpers::render_with_theme(
         &v,
         "auth/login.html",
@@ -191,18 +194,14 @@ pub async fn login(
     headers: axum::http::HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Result<Response> {
-    if !validate_csrf(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
         return Ok(StatusCode::FORBIDDEN.into_response());
     }
 
     let user = if form.identifier.contains('@') {
-        UserModel::find_by_email(&ctx.db, &form.identifier)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+        UserModel::find_by_email(&ctx.db, &form.identifier).await?
     } else {
-        UserModel::find_by_username(&ctx.db, &form.identifier)
-            .await
-            .map_err(|_| Error::InternalServerError)?
+        UserModel::find_by_username(&ctx.db, &form.identifier).await?
     };
 
     let user = match user {
@@ -220,33 +219,19 @@ pub async fn login(
         }
     };
 
-    let jwt_secret = ctx
-        .config
-        .get_jwt_config()
-        .map_err(|_| Error::InternalServerError)?;
+    let jwt_secret = ctx.config.get_jwt_config()?;
 
-    let access_token =
-        create_access_token(&user, &jwt_secret.secret).map_err(|_| Error::InternalServerError)?;
-    let refresh_token =
-        create_refresh_token(&user, &jwt_secret.secret).map_err(|_| Error::InternalServerError)?;
+    let access_token = create_access_token(&user, &jwt_secret.secret).map_err(Error::wrap)?;
+    let refresh_token = create_refresh_token(&user, &jwt_secret.secret).map_err(Error::wrap)?;
 
     let secure_cookies = taverna.base_url.starts_with("https");
-
-    let access_cookie = Cookie::build(("access_token", access_token))
-        .http_only(true)
-        .same_site(SameSite::Lax)
-        .path("/")
-        .secure(secure_cookies)
-        .max_age(time::Duration::hours(1))
-        .build();
-
-    let refresh_cookie = Cookie::build(("refresh_token", refresh_token))
-        .http_only(true)
-        .same_site(SameSite::Lax)
-        .path("/")
-        .secure(secure_cookies)
-        .max_age(time::Duration::days(7))
-        .build();
+    let access_cookie = access_cookie(access_token, secure_cookies);
+    let refresh_cookie = session_cookie(
+        REFRESH_TOKEN_COOKIE,
+        refresh_token,
+        time::Duration::seconds(TokenKind::Refresh.lifetime().num_seconds()),
+        secure_cookies,
+    );
 
     let response = format::redirect("/").into_response();
     Ok((jar.add(access_cookie).add(refresh_cookie), response).into_response())
@@ -259,53 +244,11 @@ pub async fn logout(
     Extension(taverna): Extension<TavernaConfig>,
 ) -> Result<Response> {
     let secure_cookies = taverna.base_url.starts_with("https");
-
-    let access_cookie = Cookie::build(("access_token", ""))
-        .http_only(true)
-        .same_site(SameSite::Lax)
-        .path("/")
-        .secure(secure_cookies)
-        .max_age(time::Duration::new(0, 0))
-        .build();
-
-    let refresh_cookie = Cookie::build(("refresh_token", ""))
-        .http_only(true)
-        .same_site(SameSite::Lax)
-        .path("/")
-        .secure(secure_cookies)
-        .max_age(time::Duration::new(0, 0))
-        .build();
+    let [access_cookie, refresh_cookie] = [ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE]
+        .map(|name| session_cookie(name, String::new(), time::Duration::ZERO, secure_cookies));
 
     let response = format::redirect("/login").into_response();
     Ok((jar.add(access_cookie).add(refresh_cookie), response).into_response())
-}
-
-/// Validates the CSRF token from the form against the cookie and checks origin.
-pub(crate) fn validate_csrf(
-    jar: &CookieJar,
-    form_token: Option<&str>,
-    headers: &axum::http::HeaderMap,
-    taverna: &TavernaConfig,
-) -> bool {
-    if let Ok(base) = url::Url::parse(&taverna.base_url) {
-        let origin = headers
-            .get("origin")
-            .or_else(|| headers.get("referer"))
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| url::Url::parse(v).ok());
-        if let Some(ref origin_url) = origin
-            && (origin_url.scheme() != base.scheme()
-                || origin_url.host() != base.host()
-                || origin_url.port_or_known_default() != base.port_or_known_default())
-        {
-            return false;
-        }
-    }
-    let cookie_token = jar.get("csrf_token").map(|c| c.value().to_string());
-    match (cookie_token, form_token) {
-        (Some(ref cookie), Some(form)) => cookie == form,
-        _ => false,
-    }
 }
 
 /// Renders a template with a fresh CSRF cookie, carrying over existing cookie jar.
@@ -316,13 +259,7 @@ fn render_with_csrf(
     mut ctx: serde_json::Value,
     theme: &CurrentTheme,
 ) -> Result<Response> {
-    let csrf_token = uuid::Uuid::new_v4().to_string();
-    let csrf_cookie = Cookie::build(("csrf_token", csrf_token.clone()))
-        .http_only(true)
-        .same_site(SameSite::Strict)
-        .secure(cfg!(not(debug_assertions)))
-        .path("/")
-        .build();
+    let (csrf_token, csrf_cookie) = csrf::issue();
     if let Some(obj) = ctx.as_object_mut() {
         obj.insert("csrf_token".to_string(), serde_json::json!(csrf_token));
     }
