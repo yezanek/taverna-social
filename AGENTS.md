@@ -1,6 +1,6 @@
 # Taverna — Agent Instructions
 
-**Location:** Repo root. Auto-loaded by opencode, gemini-cli, and other AI coding tools on startup.
+**Location:** Repo root. Read by AI coding tools and human contributors alike.
 
 **Read this file first. Read SPEC.md second. Then read your phase file.**
 
