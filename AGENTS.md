@@ -30,71 +30,35 @@ You are implementing Taverna: a federated community platform (like Reddit + Face
 ## Project Layout (Loco conventions)
 
 ```
-taverna/
-├── Cargo.toml
+taverna-social/
+├── Cargo.toml                 ← package `taverna`, binary `taverna-cli`
+├── .env.example               ← copy to .env; loaded at startup
 ├── config/
-│   ├── development.toml
-│   └── production.toml
-├── migration/
-│   └── src/
-│       ├── lib.rs
-│       ├── m001_extensions.rs
-│       ├── m002_users.rs
-│       ├── m003_communities.rs
-│       ├── m004_posts_comments.rs
-│       ├── m005_votes_follows.rs
-│       └── m006_federation.rs
+│   ├── development.yaml
+│   ├── test.yaml
+│   └── production.example.yaml ← copy to production.yaml (git-ignored)
+├── migration/src/             ← m001_extensions .. m010_performance_indexes
 ├── src/
-│   ├── app.rs
-│   ├── lib.rs
-│   ├── controllers/
-│   │   ├── auth.rs
-│   │   ├── communities.rs
-│   │   ├── posts.rs
-│   │   ├── comments.rs
-│   │   ├── users.rs
-│   │   └── federation/
-│   │       ├── mod.rs
-│   │       ├── inbox.rs
-│   │       ├── outbox.rs
-│   │       └── webfinger.rs
-│   ├── models/
-│   │   ├── _entities/          ← SeaORM generated
-│   │   ├── users.rs
-│   │   ├── communities.rs
-│   │   ├── posts.rs
-│   │   ├── comments.rs
-│   │   ├── votes.rs
-│   │   ├── follows.rs
-│   │   └── federation_objects.rs
-│   ├── workers/
-│   │   ├── deliver_activity.rs
-│   │   └── fetch_remote.rs
-│   ├── initializers/
-│   │   ├── http_signature.rs
-│   │   └── content_negotiation.rs
-│   ├── views/
-│   │   ├── layouts/
-│   │   │   ├── base.html
-│   │   │   └── sidebar.html
-│   │   ├── communities/
-│   │   │   ├── feed.html
-│   │   │   ├── post.html
-│   │   │   └── settings.html
-│   │   ├── users/
-│   │   │   ├── profile.html
-│   │   │   └── settings.html
-│   │   ├── auth/
-│   │   │   ├── login.html
-│   │   │   └── register.html
-│   │   └── partials/
-│   │       ├── post_card.html
-│   │       ├── comment.html
-│   │       └── vote_buttons.html
-│   └── mailers/
-└── assets/
-    └── static/
-        └── htmx.min.js
+│   ├── app.rs                 ← routes, middleware stack, workers
+│   ├── bin/main.rs
+│   ├── common/                ← config.rs (TavernaConfig), jwt, markdown
+│   ├── controllers/           ← admin, auth, communities, posts, users,
+│   │   │                        setup, verify, theme, csrf, errors, home
+│   │   └── federation/        ← actors, inbox, notes, nodeinfo, webfinger
+│   ├── federation/            ← activities, protocol, traits, outbound
+│   ├── initializers/          ← view_engine, rate_limiter, federation_jobs,
+│   │                            first_run, auth/theme/content negotiation
+│   ├── mailers/               ← verification email
+│   ├── models/                ← one file per table; _entities/ generated
+│   ├── views/                 ← the `Views` render extractor
+│   └── workers/               ← deliver_activity, expire_remote_cache
+├── assets/
+│   ├── views/                 ← Tera templates (layouts, partials, pages)
+│   └── static/                ← theme.css, htmx.min.js, 404.html
+├── tests/                     ← integration tests, one file per area
+└── docs/
+    ├── CONFIGURATION.md
+    └── ai/                    ← SPEC, DECISIONS, PHASE_* plans
 ```
 
 ---
@@ -154,64 +118,70 @@ Each phase has its own file: `PHASE_1.md`, `PHASE_2.md`, etc.
 
 ## How to Run the Project
 
+See [README.md](README.md) for the full guide and
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) for every setting.
+
 ```bash
-# Initial setup
-cargo install loco-cli sea-orm-cli
-# Scaffold into repo root — see PHASE_1.md Task 1.1
-
-# Database
+# Database (PostgreSQL 16; migrations create uuid-ossp and ltree)
 createdb taverna_development
-cargo loco db migrate
+createdb taverna_test
 
-# Development server
+# Development server on http://localhost:3000 (auto-migrates)
 cargo loco start
 
-# Run tests
-cargo test
+# Migrations only
+cargo loco db migrate
 
-# Format + lint
-cargo fmt && cargo clippy -- -D warnings
+# Tests (need TEST_DATABASE_URL or the default local taverna_test database)
+cargo test --all-features
+
+# Format + lint, as CI runs them
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
 ```
+
+`cargo loco` is an alias for `cargo run --` (see `.cargo/config.toml`); no
+separate `loco-cli` install is needed.
 
 ---
 
 ## Environment Variables
 
-The following must be set in development (put in `.env` or `config/development.toml`):
+All are optional in development (defaults in `config/development.yaml`).
+Put them in `.env` (see `.env.example`) or the environment:
 
 ```
-DATABASE_URL=postgres://localhost/taverna_development
+DATABASE_URL=postgres://localhost:5432/taverna_development
+TEST_DATABASE_URL=postgres://localhost:5432/taverna_test
 BASE_URL=http://localhost:3000
+TAVERNA_DOMAIN=localhost:3000
 JWT_SECRET=<generate with: openssl rand -hex 32>
+FEDERATION_ENABLED=false
+RATE_LIMITING_ENABLED=true
+TRUSTED_PROXIES=
 ```
+
+Taverna's settings are read from the `settings:` block of the config file
+into `TavernaConfig` (`src/common/config.rs`) and kept in `ctx.shared_store`.
+Add new settings there, not as direct `std::env::var` reads. Config YAML
+uses `<%= get_env(...) %>`, not `{{ }}`.
 
 ---
 
 ## Key Dependencies (Cargo.toml)
 
-```toml
-[dependencies]
-loco-rs = { version = "0.14", features = ["with-db"] }
-axum = { version = "0.7", features = ["macros"] }
-sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["full"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-rsa = "0.9"
-sha2 = "0.10"
-base64 = "0.22"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-tera = "1"
-pulldown-cmark = "0.11"
-ammonia = "4"
-url = "2"
-argon2 = "0.5"
-tower = "0.4"
-tracing = "0.1"
-anyhow = "1"
+Versions as of 0.0.8; `Cargo.toml` is the source of truth.
 
-[dev-dependencies]
-loco-rs = { version = "0.14", features = ["testing"] }
-```
+| Crate | Version | Notes |
+|---|---|---|
+| `loco-rs` | 1.2 | `with-db`; `testing` in dev-dependencies |
+| `axum` | 0.8 | |
+| `sea-orm` | 2.0 | `sqlx-postgres`, `runtime-tokio-rustls` |
+| `tera` | 2 | |
+| `activitypub_federation` | 0.7.0-beta | `axum` feature; does all HTTP signatures |
+| `reqwest` | 0.13 | not to be used directly in federation code |
+| `jsonwebtoken` | 11 | `rust_crypto` |
+| `argon2` | 0.6 | password hashing |
+| `pulldown-cmark` / `ammonia` | 0.13 / 4 | Markdown + sanitising |
+| `governor` / `ipnet` | 0.10 / 2 | per-client rate limiting |
+| `axum-test` (dev) | 17.x | keep on 17: Loco 1.2's testing is built on it |
