@@ -8,6 +8,8 @@ use governor::{DefaultKeyedRateLimiter, Quota};
 use loco_rs::Result;
 use loco_rs::app::{AppContext, Initializer};
 use std::num::NonZeroU32;
+
+use crate::common::config::TavernaConfig;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -77,11 +79,13 @@ impl Initializer for RateLimiterInitializer {
         "rate-limiter".to_string()
     }
 
-    async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
-        let enabled = std::env::var("RATE_LIMITING_ENABLED")
-            .map(|v| v == "1" || v == "true")
-            .unwrap_or(true);
-        if !enabled {
+    async fn after_routes(&self, router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
+        let settings = ctx
+            .shared_store
+            .get::<TavernaConfig>()
+            .ok_or_else(|| loco_rs::Error::string("TavernaConfig missing from shared store"))?
+            .rate_limiting;
+        if !settings.enabled {
             return Ok(router);
         }
         // Keyed limiters keep one entry per client forever unless pruned;

@@ -190,7 +190,7 @@ mod tests {
     async fn theme_redirect_only_follows_local_referers() {
         let (server, ctx) = crate::common::test_server_and_ctx().await;
         user(&ctx.db, "themer").await;
-        let base = taverna::common::config::TavernaConfig::from_env()
+        let base = taverna::common::config::TavernaConfig::from_config(&ctx.config)
             .unwrap()
             .base_url;
 

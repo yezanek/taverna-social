@@ -582,27 +582,24 @@ See PHASE_4.md for full implementation details and `ActivityHandler` implementat
 
 ## 8. Configuration
 
-```toml
-# config/production.toml
+```yaml
+# config/production.yaml (from config/production.example.yaml)
 
-[server]
-binding = "0.0.0.0"
-port = 3000
+server:
+  binding: 0.0.0.0
+  port: 3000
 
-[database]
-min_connections = 5
-max_connections = 50
+database:
+  min_connections: 10
+  max_connections: 100
 
-[taverna]
-domain = "${TAVERNA_DOMAIN}"
-base_url = "${BASE_URL}"
-
-[taverna.federation]
-enabled = true
-blocked_domains = []
-
-[workers.deliver_activity]
-concurrency = 8
+# Taverna's settings live in Loco's typed `settings:` block (ADR-025).
+settings:
+  domain: <%= get_env(name="TAVERNA_DOMAIN") %>
+  base_url: <%= get_env(name="BASE_URL") %>
+  federation:
+    enabled: true
+    blocked_domains: ""
 ```
 
 ---

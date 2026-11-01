@@ -51,7 +51,7 @@ impl Hooks for App {
     /// Reads Taverna's settings and builds the federation config once, and
     /// keeps both in Loco's shared store for the router and the workers.
     async fn after_context(ctx: AppContext) -> Result<AppContext> {
-        let taverna_config = TavernaConfig::from_env()
+        let taverna_config = TavernaConfig::from_config(&ctx.config)
             .map_err(|e| loco_rs::Error::string(&format!("Config error: {e}")))?;
         let federation_config =
             crate::federation::build_config(ctx.db.clone(), &taverna_config.domain)
