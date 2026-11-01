@@ -136,8 +136,11 @@ impl Hooks for App {
             );
 
         let community_mod_routes = loco_rs::controller::Routes::new()
-            .add("/c/{slug}/ban/{username}", post(communities::ban_user))
-            .add("/c/{slug}/unban/{username}", post(communities::unban_user));
+            .add("/c/{slug}/bans", post(communities::ban_user))
+            .add(
+                "/c/{slug}/bans/{username}/delete",
+                post(communities::unban_user),
+            );
 
         let user_routes = loco_rs::controller::Routes::new()
             .add("/u/{username}", get(users::profile))

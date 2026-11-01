@@ -61,8 +61,9 @@ POST /c/:slug/posts/:id/pin           → toggle is_pinned
 POST /c/:slug/posts/:id/lock          → toggle is_locked (no new comments)
 POST /c/:slug/posts/:id/comments/:cid/remove → remove comment
 
-POST /c/:slug/ban/:username           → insert ban row, add to community bans
-POST /c/:slug/unban/:username         → remove ban
+POST /c/:slug/bans                    → form: username, reason; insert ban row
+POST /c/:slug/bans/:username/delete   → remove ban
+(Both are driven from the ban list on /c/:slug/settings; see ADR-028.)
 ```
 
 **Create community bans table** (new migration: `m007_bans.rs`):

@@ -359,3 +359,15 @@ template's context, so handlers no longer take `Extension<CurrentTheme>`.
 
 **Reason:** SPEC §3.5 wants the theme available to every template; passing
 it by hand through about 30 handlers was easy to forget and noisy.
+
+## ADR-028: Community bans are managed from the settings page
+
+**Decision:** `POST /c/{slug}/bans` takes `username` and an optional
+`reason` as form fields, and `POST /c/{slug}/bans/{username}/delete` lifts a
+ban. They replace `/c/{slug}/ban/{username}` and `/c/{slug}/unban/{username}`.
+The community settings page lists current bans with Unban buttons and has a
+form to add one; the feed links moderators to that page. Banning an
+already banned user updates the reason instead of failing.
+
+**Reason:** With the username in the path, a plain HTML form could not
+target the old routes without JavaScript, so no page linked to them.
