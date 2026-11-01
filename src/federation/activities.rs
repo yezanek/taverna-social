@@ -185,8 +185,24 @@ async fn addressed_community(
     Ok(None)
 }
 
+/// Whether a remote Note is addressed to the public collection.
+///
+/// Mastodon direct messages and followers-only posts are delivered to our
+/// inboxes too, but leave out `as:Public`. Taverna only shows public content
+/// (direct messages are out of scope, SPEC.md), so anything else must never be stored:
+/// the feeds and comment threads have no per-viewer visibility checks.
+fn is_public(note: &Note, activity: &Create) -> bool {
+    note.to
+        .iter()
+        .chain(note.cc.iter())
+        .chain(activity.to.iter())
+        .chain(activity.cc.iter())
+        .any(|target| matches!(target.as_str(), outbound::AP_PUBLIC | "as:Public"))
+}
+
 /// Create{Note}: remote posts go to `remote_posts`, remote replies to
 /// `remote_comments` (ADR-017). Never writes to local `posts`/`comments`.
+/// Non-public Notes (DMs, followers-only posts) are dropped.
 async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), anyhow::Error> {
     let note = &activity.object;
     let actor = activity.actor.as_str();
@@ -196,6 +212,10 @@ async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), 
             actor,
             note.attributed_to
         );
+    }
+    if !is_public(note, &activity) {
+        tracing::debug!(note = %note.id, "non-public note (DM or followers-only), ignoring");
+        return Ok(());
     }
     RemoteActorModel::ensure(db, actor).await?;
     let raw = serde_json::to_value(note)?;
