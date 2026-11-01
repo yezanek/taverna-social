@@ -1,7 +1,8 @@
 # Taverna
 
-A self-hostable, federated community platform: Facebook Groups meets old
-Reddit, written in Rust and part of the Fediverse through ActivityPub.
+A self-hostable, federated community platform where people gather in
+communities to share posts and hold threaded discussions. Taverna is written
+in Rust and joins the Fediverse through ActivityPub.
 
 **Status:** pre-release (version 0.0.8). All eight build phases are merged;
 expect breaking changes before 1.0.
