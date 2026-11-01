@@ -23,6 +23,7 @@ pgmq must be installed as a PostgreSQL extension:
   BLOCKED_DOMAINS=spam.example,bad.example
   HTTP_SIGNATURE_EXPIRY_SECONDS=30
   RATE_LIMITING_ENABLED=true|false
+  TRUSTED_PROXIES=127.0.0.1,::1
 
 ## Configuration
   cp config/production.example.yaml config/production.yaml
@@ -46,6 +47,14 @@ pgmq must be installed as a PostgreSQL extension:
     }
     encode gzip zstd
   }
+
+  Rate limits are kept per client address. Taverna only believes
+  X-Forwarded-For / X-Real-IP from addresses listed in TRUSTED_PROXIES.
+  With Caddy on the same host, set TRUSTED_PROXIES=127.0.0.1,::1;
+  otherwise every visitor shares Caddy's address and one limit. Leave it
+  empty if clients reach Taverna directly, so a forged header can't buy a
+  fresh limit. Also bind the app to localhost (server.binding) when it
+  sits behind a proxy.
 
 ## Background jobs
   The server process runs two background loops (not started in tests):

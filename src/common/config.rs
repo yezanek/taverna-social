@@ -27,11 +27,19 @@ pub struct FederationSettings {
 pub struct RateLimitSettings {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Reverse proxies (IPs or CIDRs) whose `X-Forwarded-For` is believed.
+    /// A YAML list, or a comma-separated string (as `TRUSTED_PROXIES` is).
+    /// Empty means clients are keyed on their socket address only.
+    #[serde(default, deserialize_with = "list_or_comma_separated")]
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for RateLimitSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            trusted_proxies: vec![],
+        }
     }
 }
 

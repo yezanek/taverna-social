@@ -337,3 +337,15 @@ mapping hid every database error from the logs.
 **Reason:** One file lists every setting and its default, and the
 hand-rolled `static Mutex` cache duplicated what Loco already provides.
 
+
+## ADR-026: Rate limits are keyed on the socket peer; proxies are opt-in
+
+**Decision:** The rate limiter keys each client on the socket peer address
+(`ConnectInfo<SocketAddr>`). `X-Forwarded-For` (or `X-Real-IP`) is read
+only when the peer is listed in `settings.rate_limiting.trusted_proxies`
+(`TRUSTED_PROXIES`, IPs or CIDRs), and then the header is walked from the
+right past trusted hops to the first untrusted one.
+
+**Reason:** Trusting the left-most `X-Forwarded-For` entry let any client
+reached directly pick a fresh bucket per request, and requests without the
+header all shared one `127.0.0.1` bucket.
