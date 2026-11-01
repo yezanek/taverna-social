@@ -61,6 +61,8 @@ pub async fn check_eligibility(
         reasons.push("User has removed content".to_string());
     }
 
+    // Only an active suspension counts: unsuspending clears `suspended_at`
+    // (SPEC §3.7, decided in #15).
     if settings.disqualify_if_suspended && user.suspended_at.is_some() {
         reasons.push("Account is suspended".to_string());
     }

@@ -220,7 +220,7 @@ a community. When false, users must pass all enabled checks:
 | Email verified | User must have verified their email address |
 | Minimum standing score | User's standing score must be ≥ N |
 | Not disqualified by removed content | No posts/comments removed by a moderator |
-| Not disqualified by suspension history | Account has never been suspended |
+| Not currently suspended | Account is not suspended right now (`suspended_at IS NULL`). Unsuspending lifts the disqualification; past suspensions are not recorded. |
 
 **Standing score** is a denormalized value on the user record:
 - +1 for each upvote received on any post or comment
