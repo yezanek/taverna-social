@@ -88,7 +88,7 @@ mod tests {
                 "http_signature_expiry_seconds": 30
             }
         }))
-        .unwrap();
+        .expect("test settings deserialize");
         assert!(config.rate_limiting.enabled);
         config.federation.blocked_domains
     }
