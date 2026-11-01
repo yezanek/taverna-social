@@ -17,7 +17,7 @@ use crate::controllers::{
     admin, auth, communities, federation, home, posts, setup, theme, users, verify,
 };
 use crate::initializers;
-use crate::initializers::theme_middleware::{CurrentTheme, extract_theme};
+use crate::initializers::theme_middleware::extract_theme;
 use axum::Extension;
 use axum::response::{IntoResponse, Response};
 use loco_rs::controller::views::{ViewEngine, engines::TeraView};
@@ -289,16 +289,10 @@ impl Hooks for App {
     }
 }
 
-async fn handle_404(
-    ViewEngine(v): ViewEngine<TeraView>,
-    Extension(theme): Extension<CurrentTheme>,
-) -> impl IntoResponse {
-    let html = match v.render(
+async fn handle_404(views: crate::views::Views) -> impl IntoResponse {
+    let html = match views.render_string(
         "errors/404.html",
-        json!({
-            "current_user": None::<crate::models::_entities::users::Model>,
-            "theme": theme.0,
-        }),
+        json!({ "current_user": None::<crate::models::_entities::users::Model> }),
     ) {
         Ok(h) => h,
         Err(_) => "404 Not Found".to_string(),

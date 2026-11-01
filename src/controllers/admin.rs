@@ -12,12 +12,11 @@ use tracing::instrument;
 use crate::common::config::TavernaConfig;
 use crate::controllers::csrf;
 use crate::initializers::auth_middleware::AuthUser;
-use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::_entities::{community_members, posts};
 use crate::models::communities::CommunityModel;
 use crate::models::feed::Cursor;
 use crate::models::users::UserModel;
-use crate::views::helpers;
+use crate::views::Views;
 
 /// Generic admin action form (used for CSRF-protected POST actions).
 #[derive(Debug, Deserialize)]
@@ -36,13 +35,12 @@ pub struct AdminListQuery {
 }
 
 /// Admin dashboard showing communities and users for moderation.
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn dashboard(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Query(page): Query<AdminListQuery>,
 ) -> Result<Response> {
     if !current_user.is_admin {
@@ -96,8 +94,7 @@ pub async fn dashboard(
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "admin/dashboard.html",
         json!({
             "current_user": current_user,
@@ -107,7 +104,6 @@ pub async fn dashboard(
             "users_next_cursor": user_page.next_cursor,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
@@ -198,13 +194,12 @@ pub struct AdminSettingsForm {
 }
 
 /// Admin settings page — view and update eligibility settings.
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn settings(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
     if !current_user.is_admin {
         return Err(forbidden("Admin access required"));
@@ -214,15 +209,13 @@ pub async fn settings(
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "admin/settings.html",
         json!({
             "current_user": current_user,
             "settings": settings,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }

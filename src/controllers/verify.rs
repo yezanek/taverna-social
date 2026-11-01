@@ -11,10 +11,9 @@ use tracing::instrument;
 use crate::common::config::TavernaConfig;
 use crate::controllers::csrf::{self, CsrfForm};
 use crate::initializers::auth_middleware::AuthUser;
-use crate::initializers::theme_middleware::CurrentTheme;
 use crate::mailers::verification;
 use crate::models::email_verifications::{self, VerifyOutcome};
-use crate::views::helpers;
+use crate::views::Views;
 
 #[derive(Debug, Deserialize)]
 pub struct VerifyQuery {
@@ -22,11 +21,10 @@ pub struct VerifyQuery {
 }
 
 /// `GET /verify-email?token=...` (SPEC §3.6).
-#[instrument(skip(v, ctx, theme, query))]
+#[instrument(skip(views, ctx, query))]
 pub async fn verify_email(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
-    Extension(theme): Extension<CurrentTheme>,
     Query(query): Query<VerifyQuery>,
 ) -> Result<Response> {
     let outcome = email_verifications::verify(&ctx.db, &query.token)
@@ -43,7 +41,7 @@ pub async fn verify_email(
         VerifyOutcome::Expired => "Verification token has expired. Request a new one.",
         VerifyOutcome::Unknown => "Invalid verification token.",
     };
-    helpers::render_with_theme(&v, "auth/register.html", json!({ "error": error }), &theme)
+    views.render("auth/register.html", json!({ "error": error }))
 }
 
 /// `POST /resend-verification`: issues a new token and mails it.

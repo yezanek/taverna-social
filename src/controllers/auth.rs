@@ -12,10 +12,9 @@ use crate::common::jwt::{
 };
 use crate::controllers::csrf;
 use crate::initializers::auth_middleware::{access_cookie, session_cookie};
-use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::email_verifications;
 use crate::models::users::{UserError, UserModel};
-use crate::views::helpers;
+use crate::views::Views;
 
 /// Form data for user registration.
 #[derive(Debug, Deserialize)]
@@ -38,30 +37,20 @@ pub struct LoginForm {
 }
 
 /// Renders the registration page with a CSRF token.
-#[instrument(skip(v, jar))]
-pub async fn register_form(
-    ViewEngine(v): ViewEngine<TeraView>,
-    jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
-) -> Result<Response> {
+#[instrument(skip(views, jar))]
+pub async fn register_form(views: Views, jar: CookieJar) -> Result<Response> {
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
-        "auth/register.html",
-        json!({"csrf_token": csrf_token}),
-        &theme,
-    )?;
+    let response = views.render("auth/register.html", json!({"csrf_token": csrf_token}))?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 /// Handles user registration form submission.
-#[instrument(skip(v, jar, ctx, form))]
+#[instrument(skip(views, jar, ctx, form))]
 pub async fn register(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     jar: CookieJar,
     State(ctx): State<AppContext>,
     Extension(taverna): Extension<TavernaConfig>,
-    Extension(theme): Extension<CurrentTheme>,
     headers: axum::http::HeaderMap,
     Form(form): Form<RegisterForm>,
 ) -> Result<Response> {
@@ -72,17 +61,16 @@ pub async fn register(
     let settings = crate::models::instance_settings::load(&ctx.db).await?;
     if !settings.open_registrations {
         return render_with_csrf(
-            &v,
+            &views,
             jar,
             "auth/register.html",
             json!({ "error": "Registrations are closed on this instance" }),
-            &theme,
         );
     }
 
     if form.password != form.password_confirm {
         return render_with_csrf(
-            &v,
+            &views,
             jar,
             "auth/register.html",
             json!({
@@ -90,13 +78,12 @@ pub async fn register(
                 "username": form.username,
                 "email": form.email,
             }),
-            &theme,
         );
     }
 
     if form.password.len() < crate::models::users::MIN_PASSWORD_LEN {
         return render_with_csrf(
-            &v,
+            &views,
             jar,
             "auth/register.html",
             json!({
@@ -104,7 +91,6 @@ pub async fn register(
                 "username": form.username,
                 "email": form.email,
             }),
-            &theme,
         );
     }
 
@@ -152,7 +138,7 @@ pub async fn register(
                 _ => "Registration failed. Please try again.".to_string(),
             };
             render_with_csrf(
-                &v,
+                &views,
                 jar,
                 "auth/register.html",
                 json!({
@@ -160,37 +146,26 @@ pub async fn register(
                     "username": form.username,
                     "email": form.email,
                 }),
-                &theme,
             )
         }
     }
 }
 
 /// Renders the login page with a CSRF token.
-#[instrument(skip(v, jar))]
-pub async fn login_form(
-    ViewEngine(v): ViewEngine<TeraView>,
-    jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
-) -> Result<Response> {
+#[instrument(skip(views, jar))]
+pub async fn login_form(views: Views, jar: CookieJar) -> Result<Response> {
     let (csrf_token, csrf_cookie) = csrf::issue();
-    let response = helpers::render_with_theme(
-        &v,
-        "auth/login.html",
-        json!({"csrf_token": csrf_token}),
-        &theme,
-    )?;
+    let response = views.render("auth/login.html", json!({"csrf_token": csrf_token}))?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 /// Handles login form submission and issues JWT cookies on success.
-#[instrument(skip(v, jar, ctx, form))]
+#[instrument(skip(views, jar, ctx, form))]
 pub async fn login(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     jar: CookieJar,
     State(ctx): State<AppContext>,
     Extension(taverna): Extension<TavernaConfig>,
-    Extension(theme): Extension<CurrentTheme>,
     headers: axum::http::HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Result<Response> {
@@ -208,13 +183,12 @@ pub async fn login(
         Some(u) if UserModel::verify_password(&u, &form.password).await => u,
         _ => {
             return render_with_csrf(
-                &v,
+                &views,
                 jar,
                 "auth/login.html",
                 json!({
                     "error": "Invalid credentials",
                 }),
-                &theme,
             );
         }
     };
@@ -253,16 +227,15 @@ pub async fn logout(
 
 /// Renders a template with a fresh CSRF cookie, carrying over existing cookie jar.
 fn render_with_csrf(
-    v: &TeraView,
+    views: &Views,
     jar: CookieJar,
     template: &str,
     mut ctx: serde_json::Value,
-    theme: &CurrentTheme,
 ) -> Result<Response> {
     let (csrf_token, csrf_cookie) = csrf::issue();
     if let Some(obj) = ctx.as_object_mut() {
         obj.insert("csrf_token".to_string(), serde_json::json!(csrf_token));
     }
-    let response = helpers::render_with_theme(v, template, ctx, theme)?;
+    let response = views.render(template, ctx)?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }

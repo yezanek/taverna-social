@@ -14,13 +14,12 @@ use crate::controllers::csrf;
 use crate::federation::{self, outbound, traits::DbUser};
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
-use crate::initializers::theme_middleware::CurrentTheme;
 use crate::models::comments::CommentModel;
 use crate::models::feed::CursorQuery;
 use crate::models::follows::Entity as FollowEntity;
 use crate::models::posts::PostModel;
 use crate::models::users::{UserError, UserModel};
-use crate::views::helpers;
+use crate::views::Views;
 use activitypub_federation::{config::Data, traits::Object};
 use sea_orm::DatabaseConnection;
 
@@ -68,14 +67,13 @@ pub struct PasswordForm {
 
 /// Shows a user's public profile with their posts and follower counts.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, current_user, jar, taverna, theme, render_mode, data))]
+#[instrument(skip(views, ctx, current_user, jar, taverna, render_mode, data))]
 pub async fn profile(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
     Extension(taverna): Extension<TavernaConfig>,
-    Extension(theme): Extension<CurrentTheme>,
     Extension(render_mode): Extension<RenderMode>,
     data: Data<DatabaseConnection>,
     Path(username): Path<String>,
@@ -119,8 +117,7 @@ pub async fn profile(
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "users/profile.html",
         json!({
             "current_user": current_user,
@@ -138,21 +135,19 @@ pub async fn profile(
             "domain": taverna.domain,
             "username": user.username,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 /// Shows a user's profile filtered to the posts tab.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn profile_posts(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
     Extension(taverna): Extension<TavernaConfig>,
-    Extension(theme): Extension<CurrentTheme>,
     Path(username): Path<String>,
     Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
@@ -184,8 +179,7 @@ pub async fn profile_posts(
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "users/profile.html",
         json!({
             "current_user": current_user,
@@ -203,7 +197,6 @@ pub async fn profile_posts(
             "domain": taverna.domain,
             "username": user.username,
         }),
-        &theme,
     )?;
 
     Ok((jar.add(csrf_cookie), response).into_response())
@@ -211,14 +204,13 @@ pub async fn profile_posts(
 
 /// Shows a user's profile filtered to the comments tab.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn profile_comments(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
     Extension(taverna): Extension<TavernaConfig>,
-    Extension(theme): Extension<CurrentTheme>,
     Path(username): Path<String>,
     Query(page): Query<CursorQuery>,
 ) -> Result<Response> {
@@ -250,8 +242,7 @@ pub async fn profile_comments(
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "users/profile.html",
         json!({
             "current_user": current_user,
@@ -269,16 +260,15 @@ pub async fn profile_comments(
             "domain": taverna.domain,
             "username": user.username,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
 
 /// Follows a user. Returns either an HTMX partial or a redirect.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, jar, headers, taverna))]
+#[instrument(skip(views, ctx, jar, headers, taverna))]
 pub async fn follow(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
@@ -312,8 +302,7 @@ pub async fn follow(
         == "true";
 
     if is_hx {
-        let html = helpers::render(
-            &v,
+        let html = views.render(
             "partials/follow_button.html",
             json!({
                 "is_following": true,
@@ -333,9 +322,9 @@ pub async fn follow(
 
 /// Unfollows a user. Returns either an HTMX partial or a redirect.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(v, ctx, jar, headers, taverna))]
+#[instrument(skip(views, ctx, jar, headers, taverna))]
 pub async fn unfollow(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
@@ -365,8 +354,7 @@ pub async fn unfollow(
         == "true";
 
     if is_hx {
-        let html = helpers::render(
-            &v,
+        let html = views.render(
             "partials/follow_button.html",
             json!({
                 "is_following": false,
@@ -385,13 +373,12 @@ pub async fn unfollow(
 }
 
 /// Renders the user settings page.
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn settings_form(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
 ) -> Result<Response> {
     let user = UserModel::find_by_id(&ctx.db, current_user.id)
         .await?
@@ -402,8 +389,7 @@ pub async fn settings_form(
     let user_email = user.email.clone();
     let eligibility =
         crate::models::eligibility::check_eligibility(&ctx.db, current_user.id).await?;
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "users/settings.html",
         json!({
             "current_user": current_user,
@@ -412,7 +398,6 @@ pub async fn settings_form(
             "eligibility": eligibility,
             "csrf_token": csrf_token,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
@@ -520,13 +505,12 @@ pub async fn change_password(
 }
 
 /// Shows the form to create a new profile post.
-#[instrument(skip(v, ctx, theme, current_user, jar))]
+#[instrument(skip(views, ctx, current_user, jar))]
 pub async fn profile_new_post(
-    ViewEngine(v): ViewEngine<TeraView>,
+    views: Views,
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,
     jar: CookieJar,
-    Extension(theme): Extension<CurrentTheme>,
     Path(username): Path<String>,
 ) -> Result<Response> {
     let _user = UserModel::find_by_username(&ctx.db, &username)
@@ -539,15 +523,13 @@ pub async fn profile_new_post(
 
     let (csrf_token, csrf_cookie) = csrf::issue();
 
-    let response = helpers::render_with_theme(
-        &v,
+    let response = views.render(
         "users/new_post.html",
         json!({
             "current_user": current_user,
             "csrf_token": csrf_token,
             "username": username,
         }),
-        &theme,
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
 }
