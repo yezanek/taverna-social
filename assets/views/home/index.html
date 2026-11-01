@@ -1,13 +1,64 @@
 {% extends "layouts/base.html" %}
-{% block title %}Taverna{% endblock %}
+{% block title %}Home - Taverna{% endblock %}
+{% block nav_home %}is-active{% endblock %}
 {% block content %}
-<h1>Home Feed</h1>
-{% if posts %}
-  {% for post in posts %}
-    {% include "partials/post_card.html" %}
-  {% endfor %}
-{% else %}
-  <p>No posts yet.</p>
-{% endif %}
-{% if next_cursor %}<div class="load-more" style="text-align:center;margin:1rem 0"><a href="?cursor={{ next_cursor }}" class="btn">Load more</a></div>{% endif %}
+<div class="page-grid">
+  <section class="feed" aria-labelledby="feed-title">
+    <div class="page-head" style="margin-bottom:0.5rem">
+      <h1 id="feed-title">Home feed</h1>
+      <p>The latest posts from this instance and the communities it federates with.</p>
+    </div>
+
+    {% if current_user %}
+      <div class="card composer">
+        <span class="avatar">{% if current_user.avatar_url %}<img src="{{ current_user.avatar_url }}" alt="">{% else %}{{ current_user.username[:1] }}{% endif %}</span>
+        <a class="composer-input" href="/u/{{ current_user.username }}/new">What's on your mind, {{ current_user.display_name | default(value=current_user.username) }}?</a>
+      </div>
+    {% endif %}
+
+    {% if posts %}
+      {% for post in posts %}
+        {% include "partials/post_card.html" %}
+      {% endfor %}
+      {% if next_cursor %}<div class="load-more"><a href="?cursor={{ next_cursor }}" class="btn">Load more</a></div>{% endif %}
+    {% else %}
+      <div class="card empty-state">
+        {% include "icons/feed.html" %}
+        <h2>Nothing here yet</h2>
+        <p>Join a community and start a conversation.</p>
+        <a class="btn btn-primary" href="/c">Browse communities</a>
+      </div>
+    {% endif %}
+  </section>
+
+  <aside class="rail" aria-label="About Taverna">
+    {% if current_user %}
+      <div class="card cta-card">
+        <h2 class="card-title">Start something</h2>
+        <p class="variant small">Gather people around a topic. Communities on Taverna can be followed from anywhere on the fediverse.</p>
+        <div class="stack" style="gap:0.5rem;margin-top:1rem">
+          <a class="btn btn-primary" href="/c/new">{% include "icons/plus.html" %} Create a community</a>
+          <a class="btn" href="/c">{% include "icons/compass.html" %} Discover communities</a>
+        </div>
+      </div>
+    {% else %}
+      <div class="card cta-card">
+        <h2 class="card-title">Welcome to Taverna</h2>
+        <p class="variant small">Communities for every interest, connected to the wider fediverse through ActivityPub. Join to post, comment and vote.</p>
+        <div class="stack" style="gap:0.5rem;margin-top:1rem">
+          <a class="btn btn-primary" href="/register">Create an account</a>
+          <a class="btn" href="/login">Log in</a>
+        </div>
+      </div>
+    {% endif %}
+    <div class="card">
+      <h2 class="card-title">How it works</h2>
+      <ul class="info-list" style="margin-top:0">
+        <li>{% include "icons/users.html" %}<div><strong>Communities</strong><span>Join groups to post and take part in discussions.</span></div></li>
+        <li>{% include "icons/arrow-up.html" %}<div><strong>Voting</strong><span>The best posts and comments rise to the top.</span></div></li>
+        <li>{% include "icons/globe.html" %}<div><strong>Federated</strong><span>Taverna speaks ActivityPub, so people on other servers can follow along.</span></div></li>
+      </ul>
+    </div>
+  </aside>
+</div>
 {% endblock %}

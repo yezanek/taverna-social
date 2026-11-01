@@ -1,80 +1,163 @@
 {% extends "layouts/base.html" %}
-{% block title %}{{ post.title }} - Taverna{% endblock %}
+{% block title %}{{ post.title }} - {{ community.name }} - Taverna{% endblock %}
+{% block nav_communities %}is-active{% endblock %}
 {% block content %}
-<div class="card">
-  <h1>{{ post.title }}</h1>
-  {% if body_rendered %}
-    <div class="body">{{ body_rendered | safe }}</div>
-  {% endif %}
-  {% if post.url %}
-    <p><a href="{{ post.url }}" target="_blank" rel="noopener noreferrer" style="color:var(--link)">{{ post.url }}</a></p>
-  {% endif %}
-  <div class="meta" style="color:var(--text-secondary);font-size:0.85rem;margin-top:0.5rem">
-    Posted by <a href="/u/{{ author.username }}" style="color:var(--link)">{{ author.username }}</a>
-    | {{ post.comment_count }} comments
-    | {{ post.published_at }}
-    {% if current_user and current_user.id == post.author_id %}
-    | <a href="/c/{{ slug }}/posts/{{ post.id }}/edit" style="color:var(--link)">Edit</a>
-    {% endif %}
-  </div>
-  {% include "partials/vote_buttons.html" %}
-  {% if current_user and (current_user.id == post.author_id or can_moderate) %}
-  <div class="post-actions" style="margin-top:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap">
-    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/delete" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="btn">Delete</button>
-    </form>
-    {% if can_moderate %}
-    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/pin" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="btn">{% if post.is_pinned %}Unpin{% else %}Pin{% endif %}</button>
-    </form>
-    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/lock" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="btn">{% if post.is_locked %}Unlock{% else %}Lock{% endif %}</button>
-    </form>
-    {% if not post.is_removed %}
-    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/remove" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="btn">Remove</button>
-    </form>
-    {% endif %}
-    {% endif %}
-  </div>
-  {% endif %}
-</div>
-
-<h3>Comments</h3>
-{% if current_user and not post.is_locked %}
-  <div class="card">
-    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div style="margin-bottom:0.5rem">
-        <textarea name="body" required class="comment-input" style="width:100%;min-height:80px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem"></textarea>
+<div class="page-grid">
+  <div class="feed">
+    <div class="card community-strip">
+      <a href="/c/{{ community.slug }}" class="group-icon" aria-hidden="true" tabindex="-1">{{ community.name[:1] }}</a>
+      <div style="min-width:0">
+        <h2><a href="/c/{{ community.slug }}">{{ community.name }}</a></h2>
+        <div class="muted small">c/{{ community.slug }}</div>
       </div>
-      <button type="submit" class="btn">Comment</button>
-    </form>
-  </div>
-{% endif %}
-
-{% if comments %}
-  {% for comment in comments %}
-    {% include "partials/comment.html" %}
-  {% endfor %}
-{% else %}
-  <p>No comments yet.</p>
-{% endif %}
-
-{% if remote_comments %}
-  <h3 style="margin-top:1.5rem">Replies from other instances</h3>
-  {% for rc in remote_comments %}
-    <div class="card comment remote-comment" style="margin-bottom:0.5rem">
-      <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.25rem">
-        <a href="{{ rc.author_ap_id }}" target="_blank" rel="noopener noreferrer" style="color:var(--link)">{{ rc.author_name }}</a>
-        · {{ rc.score }} points
-      </div>
-      <div>{{ rc.body_rendered | safe }}</div>
+      <span class="spacer"></span>
+      <a class="btn btn-sm" href="/c/{{ community.slug }}">Back to community</a>
     </div>
-  {% endfor %}
-{% endif %}
+
+    <article class="card post-full">
+      <header class="post-head">
+        <a href="/u/{{ author.username }}" class="avatar" aria-hidden="true" tabindex="-1">{% if author.avatar_url %}<img src="{{ author.avatar_url }}" alt="">{% else %}{{ author.username[:1] }}{% endif %}</a>
+        <div class="post-head-text">
+          <a class="post-author" href="/u/{{ author.username }}">{{ author.display_name | default(value=author.username) }}</a>
+          <span class="badge badge-primary" style="margin-left:0.25rem">OP</span>
+          <div class="post-sub">
+            <span>@{{ author.username }}</span>
+            <span class="dot-sep"></span>
+            <time datetime="{{ post.published_at }}">{{ post.published_at[:10] }}</time>
+          </div>
+        </div>
+        <span class="spacer"></span>
+        <div class="row">
+          {% if post.is_pinned %}<span class="badge badge-primary">{% include "icons/pin.html" %} Pinned</span>{% endif %}
+          {% if post.is_locked %}<span class="badge">{% include "icons/lock.html" %} Locked</span>{% endif %}
+          {% if post.is_removed %}<span class="badge badge-danger">Removed</span>{% endif %}
+          {% if current_user and (current_user.id == post.author_id or can_moderate) %}
+            <details class="menu">
+              <summary aria-label="Post options" title="Post options">{% include "icons/more.html" %}</summary>
+              <div class="menu-panel">
+                {% if current_user.id == post.author_id %}
+                  <a href="/c/{{ slug }}/posts/{{ post.id }}/edit">{% include "icons/edit.html" %} Edit post</a>
+                {% endif %}
+                {% if can_moderate %}
+                  <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/pin">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit">{% include "icons/pin.html" %} {% if post.is_pinned %}Unpin{% else %}Pin{% endif %}</button>
+                  </form>
+                  <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/lock">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit">{% include "icons/lock.html" %} {% if post.is_locked %}Unlock{% else %}Lock{% endif %}</button>
+                  </form>
+                  {% if not post.is_removed %}
+                    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/remove">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <button type="submit">{% include "icons/eye-off.html" %} Remove</button>
+                    </form>
+                  {% endif %}
+                {% endif %}
+                <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/delete">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="danger">{% include "icons/trash.html" %} Delete</button>
+                </form>
+              </div>
+            </details>
+          {% endif %}
+        </div>
+      </header>
+
+      <h1 class="post-title">{{ post.title }}</h1>
+
+      {% if body_rendered %}
+        <div class="prose">{{ body_rendered | safe }}</div>
+      {% endif %}
+
+      {% if post.url %}
+        <a class="link-preview" href="{{ post.url }}" target="_blank" rel="noopener noreferrer" style="margin-top:1rem">
+          <span class="link-preview-icon">{% include "icons/external.html" %}</span>
+          <span class="link-preview-text"><strong>Open link</strong><span>{{ post.url }}</span></span>
+        </a>
+      {% endif %}
+
+      <footer class="post-actions" style="margin-top:1rem">
+        {% include "partials/vote_buttons.html" %}
+        <a class="action" href="#comments">{% include "icons/comment.html" %} {{ post.comment_count }} {% if post.comment_count == 1 %}comment{% else %}comments{% endif %}</a>
+        <span class="spacer"></span>
+        <a class="action" href="{{ post.ap_id }}" title="Permanent federated link">{% include "icons/link.html" %} Permalink</a>
+      </footer>
+    </article>
+
+    <div class="section-head" id="comments">
+      <h2>Comments</h2>
+      <span class="muted small">{{ post.comment_count }} total</span>
+    </div>
+
+    {% if post.is_locked %}
+      <div class="notice">{% include "icons/lock.html" %} This post is locked. New comments are turned off.</div>
+    {% elif current_user %}
+      <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments" class="card comment-box">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="row" style="justify-content:flex-start;align-items:flex-start;flex-wrap:nowrap;margin:0">
+          <span class="avatar avatar-sm">{% if current_user.avatar_url %}<img src="{{ current_user.avatar_url }}" alt="">{% else %}{{ current_user.username[:1] }}{% endif %}</span>
+          <label class="visually-hidden" for="comment-body">Your comment</label>
+          <textarea id="comment-body" name="body" required class="textarea comment-input" placeholder="Join the conversation… (Markdown supported)"></textarea>
+        </div>
+        <div class="row"><button type="submit" class="btn btn-primary">Comment</button></div>
+      </form>
+    {% else %}
+      <div class="notice">{% include "icons/comment.html" %} <span><a href="/login">Log in</a> or <a href="/register">sign up</a> to join the conversation.</span></div>
+    {% endif %}
+
+    {% if comments %}
+      <div class="comment-thread">
+        {% for comment in comments %}
+          {% include "partials/comment.html" %}
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="card empty-state" style="padding:2rem">
+        <p>No comments yet. Start the conversation.</p>
+      </div>
+    {% endif %}
+
+    {% if remote_comments %}
+      <div class="section-head">
+        <h2>Replies from other instances</h2>
+        <span class="badge">{% include "icons/globe.html" %} Federated</span>
+      </div>
+      <div class="comment-thread">
+        {% for rc in remote_comments %}
+          <div class="comment remote-comment">
+            <span class="avatar avatar-sm remote" aria-hidden="true">{{ rc.author_name[:1] }}</span>
+            <div class="comment-main">
+              <div class="comment-meta">
+                <a class="post-author" href="{{ rc.author_ap_id }}" target="_blank" rel="noopener noreferrer">{{ rc.author_name }}</a>
+                <span class="muted">{{ rc.score }} points</span>
+              </div>
+              <div class="prose" style="margin:0.3rem 0 0.5rem">{{ rc.body_rendered | safe }}</div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <aside class="rail" aria-label="About this community">
+    <div class="card">
+      <div class="row" style="gap:0.75rem;margin-bottom:0.75rem">
+        <span class="group-icon">{{ community.name[:1] }}</span>
+        <h2 style="font-size:1.05rem">{{ community.name }}</h2>
+      </div>
+      {% if community.description %}
+        <p class="variant small">{{ community.description | truncate(length=220) }}</p>
+      {% endif %}
+      <a class="btn btn-block" href="/c/{{ community.slug }}" style="margin-top:0.75rem">View community</a>
+    </div>
+    <div class="card recessed">
+      <h2 class="card-title">Posting here</h2>
+      <ul class="info-list" style="margin-top:0">
+        <li>{% include "icons/rules.html" %}<div><strong>Markdown</strong><span>Format comments with Markdown: **bold**, _italic_, `code`, links.</span></div></li>
+        <li>{% include "icons/globe.html" %}<div><strong>Federated</strong><span>Replies may arrive from people on other servers.</span></div></li>
+      </ul>
+    </div>
+  </aside>
+</div>
 {% endblock %}

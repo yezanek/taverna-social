@@ -1,21 +1,24 @@
 {% extends "layouts/base.html" %}
-{% block title %}Login - Taverna{% endblock %}
+{% block title %}Log in - Taverna{% endblock %}
 {% block content %}
-<h1 style="color:var(--text-primary)">Login</h1>
-{% if error %}
-<div style="color:var(--accent);margin-bottom:1rem">{{ error }}</div>
-{% endif %}
-<form method="POST" action="/login" style="max-width:400px">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token | default(value='') }}">
-  <div style="margin-bottom:0.75rem">
-    <label for="identifier" style="color:var(--text-primary);display:block;margin-bottom:0.25rem">Username or email</label>
-    <input type="text" id="identifier" name="identifier" required autocomplete="username" placeholder="username or email@example.com" style="display:block;width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+<div class="auth-wrap">
+  <div class="card" style="padding:2rem">
+    <h1>Welcome back</h1>
+    <p class="lede">Log in to post, comment and vote.</p>
+    {% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+    <form method="POST" action="/login" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token | default(value='') }}">
+      <div class="field">
+        <label for="identifier">Username or email</label>
+        <input class="input" type="text" id="identifier" name="identifier" required autocomplete="username" placeholder="username or email@example.com">
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input class="input" type="password" id="password" name="password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-block">Log in</button>
+    </form>
   </div>
-  <div style="margin-bottom:0.75rem">
-    <label for="password" style="color:var(--text-primary);display:block;margin-bottom:0.25rem">Password</label>
-    <input type="password" id="password" name="password" required style="display:block;width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
-  </div>
-  <button type="submit" style="padding:0.5rem 1rem;background:var(--accent);color:white;border:none;border-radius:4px;cursor:pointer">Login</button>
-</form>
-<p style="margin-top:1rem;color:var(--text-secondary)">Don't have an account? <a href="/register" style="color:var(--link)">Register</a></p>
+  <p class="auth-foot">Don't have an account? <a href="/register">Sign up</a></p>
+</div>
 {% endblock %}

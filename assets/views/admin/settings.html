@@ -1,75 +1,78 @@
 {% extends "layouts/base.html" %}
 {% block title %}Admin Settings - Taverna{% endblock %}
+{% block nav_admin %}is-active{% endblock %}
 {% block content %}
-<h1>Admin Settings</h1>
+<div class="main-narrow">
+  <div class="page-head">
+    <h1>Instance settings</h1>
+    <p><a href="/admin">Back to dashboard</a></p>
+  </div>
 
-<div class="card">
   <form method="POST" action="/admin/settings">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <h2>Community Creation</h2>
-    <div class="form-row">
-      <label>
-        <input type="checkbox" name="community_creation_open" value="1" {% if settings.community_creation_open %}checked{% endif %}>
-        Community creation is open
-      </label>
-    </div>
+    <section class="card form-section">
+      <h2>Instance</h2>
+      <p>The basics of this Taverna server.</p>
+      <div class="form">
+        <div class="field">
+          <label for="instance_name">Instance name</label>
+          <input class="input" type="text" name="instance_name" id="instance_name" value="{{ settings.instance_name }}">
+        </div>
+        <label class="check">
+          <input type="checkbox" name="open_registrations" value="1" {% if settings.open_registrations %}checked{% endif %}>
+          <div><strong>Open registrations</strong><span>Anyone can create an account.</span></div>
+        </label>
+      </div>
+    </section>
 
-    <h2>Eligibility Requirements</h2>
-    <div class="form-row">
-      <label>
-        <input type="checkbox" name="require_min_account_age" value="1" {% if settings.require_min_account_age %}checked{% endif %}>
-        Require minimum account age
-      </label>
-    </div>
-    <div class="form-row">
-      <label for="min_account_age_days">Minimum account age (days)</label>
-      <input type="number" name="min_account_age_days" id="min_account_age_days" value="{{ settings.min_account_age_days }}" class="form-input" style="width:100px">
-    </div>
-    <div class="form-row">
-      <label>
-        <input type="checkbox" name="require_email_verified" value="1" {% if settings.require_email_verified %}checked{% endif %}>
-        Require email verification
-      </label>
-    </div>
-    <div class="form-row">
-      <label>
-        <input type="checkbox" name="require_min_standing" value="1" {% if settings.require_min_standing %}checked{% endif %}>
-        Require minimum standing score
-      </label>
-    </div>
-    <div class="form-row">
-      <label for="min_standing_score">Minimum standing score</label>
-      <input type="number" name="min_standing_score" id="min_standing_score" value="{{ settings.min_standing_score }}" class="form-input" style="width:100px">
-    </div>
-    <div class="form-row">
-      <label>
-        <input type="checkbox" name="disqualify_if_content_removed" value="1" {% if settings.disqualify_if_content_removed %}checked{% endif %}>
-        Disqualify if content was removed
-      </label>
-    </div>
-    <div class="form-row">
-      <label>
-        <input type="checkbox" name="disqualify_if_suspended" value="1" {% if settings.disqualify_if_suspended %}checked{% endif %}>
-        Disqualify if currently suspended
-      </label>
-    </div>
+    <section class="card form-section">
+      <h2>Community creation</h2>
+      <p>Who may start new communities on this instance.</p>
+      <div class="form">
+        <label class="check">
+          <input type="checkbox" name="community_creation_open" value="1" {% if settings.community_creation_open %}checked{% endif %}>
+          <div><strong>Community creation is open</strong><span>Eligible users can create communities.</span></div>
+        </label>
+      </div>
+    </section>
 
-    <h2>Instance</h2>
-    <div class="form-row">
-      <label for="instance_name">Instance Name</label>
-      <input type="text" name="instance_name" id="instance_name" value="{{ settings.instance_name }}" class="form-input">
-    </div>
-    <div class="form-row">
-      <label>
-        <input type="checkbox" name="open_registrations" value="1" {% if settings.open_registrations %}checked{% endif %}>
-        Open registrations
-      </label>
-    </div>
+    <section class="card form-section">
+      <h2>Eligibility requirements</h2>
+      <p>Conditions a user must meet before creating a community.</p>
+      <div class="form">
+        <label class="check">
+          <input type="checkbox" name="require_min_account_age" value="1" {% if settings.require_min_account_age %}checked{% endif %}>
+          <div><strong>Require minimum account age</strong></div>
+        </label>
+        <div class="field">
+          <label for="min_account_age_days">Minimum account age (days)</label>
+          <input class="input input-narrow" type="number" name="min_account_age_days" id="min_account_age_days" value="{{ settings.min_account_age_days }}">
+        </div>
+        <label class="check">
+          <input type="checkbox" name="require_email_verified" value="1" {% if settings.require_email_verified %}checked{% endif %}>
+          <div><strong>Require email verification</strong></div>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="require_min_standing" value="1" {% if settings.require_min_standing %}checked{% endif %}>
+          <div><strong>Require minimum standing score</strong></div>
+        </label>
+        <div class="field">
+          <label for="min_standing_score">Minimum standing score</label>
+          <input class="input input-narrow" type="number" name="min_standing_score" id="min_standing_score" value="{{ settings.min_standing_score }}">
+        </div>
+        <label class="check">
+          <input type="checkbox" name="disqualify_if_content_removed" value="1" {% if settings.disqualify_if_content_removed %}checked{% endif %}>
+          <div><strong>Disqualify if content was removed</strong></div>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="disqualify_if_suspended" value="1" {% if settings.disqualify_if_suspended %}checked{% endif %}>
+          <div><strong>Disqualify if currently suspended</strong></div>
+        </label>
+      </div>
+    </section>
 
-    <button type="submit" class="btn">Save Settings</button>
+    <div class="form-actions" style="margin-top:1.5rem"><button type="submit" class="btn btn-primary btn-lg">Save settings</button></div>
   </form>
 </div>
-
-<p><a href="/admin" style="color:var(--link)">Back to Dashboard</a></p>
 {% endblock %}

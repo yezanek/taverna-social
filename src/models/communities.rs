@@ -2,8 +2,8 @@ use crate::models::_entities::{communities, communities::ActiveModel, community_
 use crate::models::feed::{Cursor, Page};
 use activitypub_federation::http_signatures::generate_actor_keypair;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set,
 };
 use tracing::instrument;
 use uuid::Uuid;
@@ -149,6 +149,18 @@ impl CommunityModel {
             published_at: None,
             key: r.slug.clone(),
         }))
+    }
+
+    /// Counts the members of a community.
+    #[instrument(skip(db))]
+    pub async fn member_count(
+        db: &DatabaseConnection,
+        community_id: Uuid,
+    ) -> Result<u64, sea_orm::DbErr> {
+        community_members::Entity::find()
+            .filter(community_members::Column::CommunityId.eq(community_id))
+            .count(db)
+            .await
     }
 
     /// Returns the role of a user in a community, if they are a member.

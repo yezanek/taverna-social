@@ -8,35 +8,67 @@
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
-  {% if not hide_nav %}
-  <nav style="display:flex;align-items:center;gap:1rem;padding:0.75rem 1rem;background:var(--nav-bg);color:var(--nav-text)">
-    <a href="/" style="color:var(--nav-text);text-decoration:none;font-weight:bold">Taverna</a>
-    <a href="/c" style="color:var(--nav-text);text-decoration:none">Communities</a>
-    {% if current_user %}
-      <a href="/c/new" style="color:var(--nav-text);text-decoration:none">+ New Community</a>
-      {% if current_user.is_admin %}
-        <a href="/admin" style="color:var(--nav-text);border:1px solid var(--nav-text);border-radius:4px;padding:0.2rem 0.6rem;font-size:0.85rem;text-decoration:none">⚙ Admin</a>
-      {% endif %}
-    {% endif %}
-    <span style="flex:1"></span>
-    {% if current_user %}
-      <a href="/u/{{ current_user.username }}" style="color:var(--nav-text);text-decoration:none">{{ current_user.display_name | default(value=current_user.username) }}</a>
-      <form method="POST" action="/logout" style="display:inline">
-        <button type="submit" style="background:none;border:none;color:var(--nav-text);cursor:pointer;font-size:0.9rem">Logout</button>
+  <header class="topbar">
+    <a href="/" class="brand" aria-label="Taverna home">
+      <span class="brand-mark">{% include "icons/mug.html" %}</span>
+      <span class="brand-text">Taverna</span>
+    </a>
+    <div class="topbar-actions">
+      <form class="theme-switcher" method="POST" action="/theme" aria-label="Theme">
+        <button type="submit" name="theme" value="light" title="Light theme" aria-label="Switch to light theme" aria-pressed="{% if theme == 'light' %}true{% else %}false{% endif %}">{% include "icons/sun.html" %}</button>
+        <button type="submit" name="theme" value="dark" title="Dark theme" aria-label="Switch to dark theme" aria-pressed="{% if theme == 'dark' %}true{% else %}false{% endif %}">{% include "icons/moon.html" %}</button>
+        <button type="submit" name="theme" value="sepia" title="Paper theme" aria-label="Switch to sepia theme" aria-pressed="{% if theme == 'sepia' %}true{% else %}false{% endif %}">{% include "icons/book.html" %}</button>
       </form>
-    {% else %}
-      <a href="/login" style="color:var(--nav-text);text-decoration:none">Login</a>
-      <a href="/register" style="color:var(--nav-text);text-decoration:none">Register</a>
-    {% endif %}
-    <form class="theme-switcher" method="POST" action="/theme" style="display:inline">
-      <button type="submit" name="theme" value="light" title="Light mode" aria-label="Switch to light theme" style="background:transparent;border:1px solid var(--nav-text);color:var(--nav-text);border-radius:4px;padding:0.2rem 0.5rem;cursor:pointer;font-size:0.85rem">☀</button>
-      <button type="submit" name="theme" value="dark" title="Dark mode" aria-label="Switch to dark theme" style="background:transparent;border:1px solid var(--nav-text);color:var(--nav-text);border-radius:4px;padding:0.2rem 0.5rem;cursor:pointer;font-size:0.85rem">●</button>
-      <button type="submit" name="theme" value="sepia" title="Sepia mode" aria-label="Switch to sepia theme" style="background:transparent;border:1px solid var(--nav-text);color:var(--nav-text);border-radius:4px;padding:0.2rem 0.5rem;cursor:pointer;font-size:0.85rem">✦</button>
-    </form>
-  </nav>
+      {% if not hide_nav %}
+        {% if current_user %}
+          <a class="user-chip" href="/u/{{ current_user.username }}" title="Your profile">
+            <span class="avatar avatar-xs">{% if current_user.avatar_url %}<img src="{{ current_user.avatar_url }}" alt="">{% else %}{{ current_user.username[:1] }}{% endif %}</span>
+            <span class="name">{{ current_user.display_name | default(value=current_user.username) }}</span>
+          </a>
+        {% else %}
+          <a class="btn btn-ghost btn-sm" href="/login">Log in</a>
+          <a class="btn btn-primary btn-sm" href="/register">Sign up</a>
+        {% endif %}
+      {% endif %}
+    </div>
+  </header>
+
+  {% if hide_nav %}
+  <div class="shell no-sidebar">
+  {% else %}
+  <div class="shell">
+    <nav class="sidebar" aria-label="Main">
+      <a class="nav-item {% block nav_home %}{% endblock %}" href="/">{% include "icons/home.html" %}<span>Home<span class="nav-label-long"> feed</span></span></a>
+      <a class="nav-item {% block nav_communities %}{% endblock %}" href="/c">{% include "icons/compass.html" %}<span>Communities</span></a>
+      {% if current_user %}
+        <a class="nav-item {% block nav_new_community %}{% endblock %}" href="/c/new">{% include "icons/plus.html" %}<span>New community</span></a>
+        <a class="nav-item {% block nav_profile %}{% endblock %}" href="/u/{{ current_user.username }}">{% include "icons/user.html" %}<span>Profile</span></a>
+        <a class="nav-item {% block nav_settings %}{% endblock %}" href="/settings">{% include "icons/settings.html" %}<span>Settings</span></a>
+        {% if current_user.is_admin %}
+          <div class="sidebar-section tiny">Instance</div>
+          <a class="nav-item {% block nav_admin %}{% endblock %}" href="/admin">{% include "icons/shield.html" %}<span>Admin</span></a>
+        {% endif %}
+      {% endif %}
+      <div class="sidebar-footer">
+        {% if current_user %}
+          <a class="btn btn-primary btn-lg" href="/u/{{ current_user.username }}/new">{% include "icons/edit.html" %} Write a post</a>
+          <div class="sidebar-meta">
+            <form method="POST" action="/logout">
+              <button type="submit" class="link-btn small">Log out</button>
+            </form>
+          </div>
+        {% else %}
+          <a class="btn btn-primary btn-lg" href="/register">Join Taverna</a>
+          <div class="sidebar-meta">A federated home for communities. <a href="/login">Log in</a></div>
+        {% endif %}
+      </div>
+    </nav>
   {% endif %}
-  <main style="max-width:900px;margin:0 auto;padding:1rem">
-    {% block content %}{% endblock %}
-  </main>
+    <main class="main" id="main">
+      <div class="main-inner">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
 </body>
 </html>

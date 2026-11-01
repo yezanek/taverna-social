@@ -1,76 +1,83 @@
 {% extends "layouts/base.html" %}
 {% block title %}Account Settings - Taverna{% endblock %}
+{% block nav_settings %}is-active{% endblock %}
 {% block content %}
-<h1>Account Settings</h1>
-
-<form method="POST" action="/settings" style="max-width:500px">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-  <div style="margin-bottom:0.75rem">
-    <label for="display_name" style="display:block;margin-bottom:0.25rem;font-weight:bold">Display Name</label>
-    <input type="text" id="display_name" name="display_name" value="{{ user.display_name | default(value='') }}" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+<div class="main-narrow">
+  <div class="page-head">
+    <h1>Settings</h1>
+    <p>Manage your profile, password and standing.</p>
   </div>
 
-  <div style="margin-bottom:0.75rem">
-    <label for="bio" style="display:block;margin-bottom:0.25rem;font-weight:bold">Bio</label>
-    <textarea id="bio" name="bio" rows="4" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">{{ user.bio | default(value='') }}</textarea>
-  </div>
-
-  <div style="margin-bottom:0.75rem">
-    <label for="avatar_url" style="display:block;margin-bottom:0.25rem;font-weight:bold">Avatar URL (must be HTTPS)</label>
-    <input type="text" id="avatar_url" name="avatar_url" value="{{ user.avatar_url | default(value='') }}" placeholder="https://..." style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
-  </div>
-
-  <div style="margin-bottom:0.75rem">
-    <label for="email" style="display:block;margin-bottom:0.25rem;font-weight:bold">Email</label>
-    <input type="email" id="email" name="email" value="{{ email | default(value='') }}" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
-  </div>
-
-  <button type="submit" class="btn">Save Settings</button>
-</form>
-
-<h2 style="margin-top:2rem">Change Password</h2>
-
-<form method="POST" action="/settings/password" style="max-width:500px">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-  <div style="margin-bottom:0.75rem">
-    <label for="current_password" style="display:block;margin-bottom:0.25rem;font-weight:bold">Current Password</label>
-    <input type="password" id="current_password" name="current_password" required style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
-  </div>
-
-  <div style="margin-bottom:0.75rem">
-    <label for="new_password" style="display:block;margin-bottom:0.25rem;font-weight:bold">New Password</label>
-    <input type="password" id="new_password" name="new_password" required minlength="8" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
-  </div>
-
-  <div style="margin-bottom:0.75rem">
-    <label for="new_password_confirm" style="display:block;margin-bottom:0.25rem;font-weight:bold">Confirm New Password</label>
-    <input type="password" id="new_password_confirm" name="new_password_confirm" required minlength="8" style="width:100%;padding:0.5rem;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
-  </div>
-
-  <button type="submit" class="btn">Change Password</button>
-</form>
-
-<h2 style="margin-top:2rem">Eligibility Status</h2>
-<div style="max-width:500px;padding:0.75rem;border:1px solid var(--border);border-radius:4px">
-  <p><strong>Standing Score:</strong> {{ user.standing_score }}</p>
-  <p><strong>Email Verified:</strong> {% if user.email_verified %}Yes{% else %}No
-    <form method="POST" action="/resend-verification" style="display:inline">
+  <section class="card form-section">
+    <h2>Profile</h2>
+    <p>This is what people see on your profile, here and across the fediverse.</p>
+    <form method="POST" action="/settings" class="form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer;text-decoration:underline">Resend verification email</button>
+      <div class="field">
+        <label for="display_name">Display name</label>
+        <input class="input" type="text" id="display_name" name="display_name" value="{{ user.display_name | default(value='') }}">
+      </div>
+      <div class="field">
+        <label for="bio">Bio</label>
+        <textarea class="textarea" id="bio" name="bio" rows="4" placeholder="Markdown supported">{{ user.bio | default(value='') }}</textarea>
+      </div>
+      <div class="field">
+        <label for="avatar_url">Avatar URL</label>
+        <input class="input" type="text" id="avatar_url" name="avatar_url" value="{{ user.avatar_url | default(value='') }}" placeholder="https://...">
+        <span class="help">Must be an HTTPS link to an image.</span>
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input class="input" type="email" id="email" name="email" value="{{ email | default(value='') }}">
+      </div>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Save settings</button></div>
     </form>
-  {% endif %}</p>
-  <p><strong>Suspended:</strong> {% if user.suspended_at %}Yes{% else %}No{% endif %}</p>
-  {% if eligibility %}
-    <p><strong>Can create communities:</strong> {% if eligibility.eligible %}Yes{% else %}No{% endif %}</p>
-    {% if eligibility.reasons %}
-      <ul style="color:var(--danger, #c00);margin:0.5rem 0 0 1rem">
-        {% for reason in eligibility.reasons %}
-          <li>{{ reason }}</li>
-        {% endfor %}
-      </ul>
+  </section>
+
+  <section class="card form-section">
+    <h2>Change password</h2>
+    <p>Use at least 8 characters.</p>
+    <form method="POST" action="/settings/password" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field">
+        <label for="current_password">Current password</label>
+        <input class="input" type="password" id="current_password" name="current_password" required autocomplete="current-password">
+      </div>
+      <div class="field">
+        <label for="new_password">New password</label>
+        <input class="input" type="password" id="new_password" name="new_password" required minlength="8" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label for="new_password_confirm">Confirm new password</label>
+        <input class="input" type="password" id="new_password_confirm" name="new_password_confirm" required minlength="8" autocomplete="new-password">
+      </div>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Change password</button></div>
+    </form>
+  </section>
+
+  <section class="card form-section">
+    <h2>Eligibility status</h2>
+    <p>Your standing decides whether you can create communities.</p>
+    <ul class="info-list" style="margin-top:0">
+      <li>{% include "icons/arrow-up.html" %}<div><strong>Standing score</strong><span>{{ user.standing_score }}</span></div></li>
+      <li>{% include "icons/at.html" %}<div><strong>Email verified</strong><span>{% if user.email_verified %}Yes{% else %}No
+        <form method="POST" action="/resend-verification" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          · <button type="submit" class="link-btn" style="color:var(--primary)">Resend verification email</button>
+        </form>
+      {% endif %}</span></div></li>
+      <li>{% include "icons/ban.html" %}<div><strong>Suspended</strong><span>{% if user.suspended_at %}Yes{% else %}No{% endif %}</span></div></li>
+      {% if eligibility %}
+        <li>{% include "icons/users.html" %}<div><strong>Can create communities</strong><span>{% if eligibility.eligible %}Yes{% else %}No{% endif %}</span></div></li>
+      {% endif %}
+    </ul>
+    {% if eligibility and eligibility.reasons %}
+      <div class="alert" style="margin:1rem 0 0">
+        <ul style="margin:0;padding-left:1.1rem">
+          {% for reason in eligibility.reasons %}<li>{{ reason }}</li>{% endfor %}
+        </ul>
+      </div>
     {% endif %}
-  {% endif %}
+  </section>
 </div>
 {% endblock %}

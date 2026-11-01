@@ -75,13 +75,14 @@ pub async fn list(
 
 /// Shows a community's feed (posts) or its ActivityPub actor representation.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(views, ctx, current_user, jar, data))]
+#[instrument(skip(views, ctx, current_user, jar, taverna, data))]
 pub async fn feed(
     views: Views,
     State(ctx): State<AppContext>,
     OptionalAuthUser(current_user): OptionalAuthUser,
     jar: CookieJar,
     Extension(render_mode): Extension<RenderMode>,
+    Extension(taverna): Extension<TavernaConfig>,
     data: Data<DatabaseConnection>,
     Path(slug): Path<String>,
     Query(page): Query<CursorQuery>,
@@ -112,6 +113,7 @@ pub async fn feed(
 
     let posts =
         feed::community_feed(&ctx.db, community.id, page.cursor().as_ref(), PER_PAGE).await?;
+    let member_count = CommunityModel::member_count(&ctx.db, community.id).await?;
 
     let description_rendered = community
         .description
@@ -128,6 +130,8 @@ pub async fn feed(
             "description_rendered": description_rendered,
             "is_member": is_member,
             "can_moderate": can_moderate,
+            "member_count": member_count,
+            "domain": taverna.domain,
             "posts": posts.items,
             "next_cursor": posts.next_cursor,
             "csrf_token": csrf_token,

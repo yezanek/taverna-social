@@ -1,15 +1,68 @@
-<div class="card post-card">
-  <div class="post-title">
-    <a href="{% if post.origin is defined and post.origin == 'remote' %}{{ post.ap_id }}{% elif post.community_slug %}/c/{{ post.community_slug }}/posts/{{ post.id }}{% elif community %}/c/{{ community.slug }}/posts/{{ post.id }}{% else %}#{% endif %}"{% if post.origin is defined and post.origin == 'remote' %} target="_blank" rel="noopener noreferrer"{% endif %} style="color:var(--text-primary);text-decoration:none;font-weight:bold;font-size:1.1rem">
-      {{ post.title }}
-    </a>
-  </div>
-  {% if post.url %}
-    <div class="post-meta" style="color:var(--text-secondary);font-size:0.85rem">
-      <a href="{{ post.url }}" target="_blank" rel="noopener noreferrer" style="color:var(--link)">{{ post.url }}</a>
+{%- set remote = post.origin is defined and post.origin == 'remote' -%}
+{%- if remote -%}
+  {%- set post_href = post.ap_id -%}
+{%- elif post.community_slug is defined and post.community_slug -%}
+  {%- set post_href = "/c/" ~ post.community_slug ~ "/posts/" ~ post.id -%}
+{%- elif community is defined and community -%}
+  {%- set post_href = "/c/" ~ community.slug ~ "/posts/" ~ post.id -%}
+{%- else -%}
+  {%- set post_href = "" -%}
+{%- endif -%}
+{%- if post.author_name is defined -%}
+  {%- set author = post.author_name -%}
+{%- else -%}
+  {%- set author = username -%}
+{%- endif -%}
+<article class="card post-card{% if post.is_pinned %} pinned{% endif %}">
+  <header class="post-head">
+    <span class="avatar avatar-sm{% if remote %} remote{% endif %}">{{ author[:1] }}</span>
+    <div class="post-head-text">
+      {% if remote %}
+        <a class="post-author" href="{{ post.author_ap_id }}" target="_blank" rel="noopener noreferrer">{{ author }}</a>
+      {% else %}
+        <a class="post-author" href="/u/{{ author }}">{{ author }}</a>
+      {% endif %}
+      <div class="post-sub">
+        <time datetime="{{ post.published_at }}">{{ post.published_at[:10] }}</time>
+        {% if post.community_slug is defined and post.community_slug and not (community is defined and community) %}
+          <span class="dot-sep"></span><a href="/c/{{ post.community_slug }}">c/{{ post.community_slug }}</a>
+        {% endif %}
+      </div>
     </div>
+    {% if post.is_pinned %}<span class="badge badge-primary">{% include "icons/pin.html" %} Pinned</span>
+    {% elif remote %}<span class="badge">{% include "icons/globe.html" %} Federated</span>
+    {% elif post.is_locked %}<span class="badge">{% include "icons/lock.html" %} Locked</span>{% endif %}
+  </header>
+
+  <h2 class="post-title">
+    {% if post_href %}
+      <a href="{{ post_href }}"{% if remote %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ post.title }}</a>
+    {% else %}
+      {{ post.title }}
+    {% endif %}
+  </h2>
+
+  {% if post.body %}
+    <p class="post-excerpt">{{ post.body | truncate(length=280) }}</p>
   {% endif %}
-  <div class="post-details" style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem">
-    {{ post.score }} points | {{ post.comment_count }} comments{% if post.author_name %} | by {{ post.author_name }}{% endif %}{% if post.origin is defined and post.origin == 'remote' %} | federated{% endif %}
-  </div>
-</div>
+
+  {% if post.url %}
+    <a class="link-preview" href="{{ post.url }}" target="_blank" rel="noopener noreferrer">
+      <span class="link-preview-icon">{% include "icons/link.html" %}</span>
+      <span class="link-preview-text"><strong>Linked page</strong><span>{{ post.url }}</span></span>
+    </a>
+  {% endif %}
+
+  <footer class="post-actions">
+    <span class="vote-buttons vote-static" title="Score">
+      <span class="vote-btn" aria-hidden="true">{% include "icons/arrow-up.html" %}</span>
+      <span class="score{% if post.score > 0 %} positive{% elif post.score < 0 %} negative{% endif %}">{{ post.score }}<span class="visually-hidden"> points</span></span>
+      <span class="vote-btn" aria-hidden="true">{% include "icons/arrow-down.html" %}</span>
+    </span>
+    {% if post_href %}
+      <a class="action" href="{{ post_href }}{% if not remote %}#comments{% endif %}"{% if remote %} target="_blank" rel="noopener noreferrer"{% endif %}>{% include "icons/comment.html" %} {{ post.comment_count }}<span class="visually-hidden"> comments</span></a>
+    {% else %}
+      <span class="action">{% include "icons/comment.html" %} {{ post.comment_count }}<span class="visually-hidden"> comments</span></span>
+    {% endif %}
+  </footer>
+</article>

@@ -1,72 +1,80 @@
 {% extends "layouts/base.html" %}
 {% block title %}{{ display_name }} - Taverna{% endblock %}
+{% block nav_profile %}{% if current_user and current_user.id == profile_user.id %}is-active{% endif %}{% endblock %}
 {% block content %}
-<div class="card">
-  <div style="display:flex;align-items:flex-start;gap:1rem">
-    {% if profile_user.avatar_url %}
-      <img src="{{ profile_user.avatar_url }}" alt="{{ display_name }}" style="width:80px;height:80px;border-radius:50%;object-fit:cover">
-    {% else %}
-      <div style="width:80px;height:80px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:2rem;color:var(--text-on-accent)">{{ avatar_letter | upper }}</div>
-    {% endif %}
-    <div style="flex:1">
-      <h1 style="margin:0">{{ display_name }}</h1>
-      <p style="color:var(--text-secondary);margin:0.25rem 0">@{{ profile_user.username }}@{{ domain }}</p>
-      {% if profile_user.is_admin %}
-        <span style="display:inline-block;background:var(--accent);color:var(--text-on-accent);padding:0.1rem 0.5rem;border-radius:4px;font-size:0.75rem">Admin</span>
-      {% endif %}
+<div class="cover profile-cover" aria-hidden="true"></div>
+<section class="profile-head">
+  <span class="avatar avatar-xl">{% if profile_user.avatar_url %}<img src="{{ profile_user.avatar_url }}" alt="{{ display_name }}">{% else %}{{ avatar_letter | upper }}{% endif %}</span>
+  <div class="profile-name">
+    <h1>{{ display_name }}</h1>
+    <div class="row">
+      <span class="profile-handle">@{{ profile_user.username }}@{{ domain }}</span>
+      {% if profile_user.is_admin %}<span class="badge badge-primary">{% include "icons/shield.html" %} Admin</span>{% endif %}
     </div>
   </div>
-
-  {% if bio_rendered %}
-    <div class="body" style="margin-top:0.75rem">{{ bio_rendered | safe }}</div>
-  {% endif %}
-
-  <div style="display:flex;gap:1rem;margin-top:0.75rem;font-size:0.9rem;color:var(--text-secondary)">
-    <span><strong>{{ follower_count }}</strong> followers</span>
-    <span><strong>{{ following_count }}</strong> following</span>
-  </div>
-
-  {% if current_user and current_user.id == profile_user.id %}
-    <div style="margin-top:0.75rem">
-      <a href="/u/{{ profile_user.username }}/new" class="btn" style="display:inline-block;padding:0.4rem 0.8rem;background:var(--accent);color:var(--text-on-accent);text-decoration:none;border-radius:4px;font-size:0.9rem">New Post</a>
-    </div>
-  {% endif %}
-  {% if current_user and current_user.id != profile_user.id %}
-    <div style="margin-top:0.75rem">
+  <div class="profile-actions">
+    {% if current_user and current_user.id == profile_user.id %}
+      <a href="/settings" class="btn">{% include "icons/settings.html" %} Edit profile</a>
+      <a href="/u/{{ profile_user.username }}/new" class="btn btn-primary">{% include "icons/edit.html" %} New post</a>
+    {% elif current_user %}
       {% include "partials/follow_button.html" %}
+    {% endif %}
+  </div>
+</section>
+
+<div class="profile-grid">
+  <aside class="stack">
+    <div class="card">
+      {% if bio_rendered %}
+        <div class="prose variant">{{ bio_rendered | safe }}</div>
+      {% else %}
+        <p class="muted">No bio yet.</p>
+      {% endif %}
+      <ul class="info-list">
+        <li>{% include "icons/at.html" %}<div><strong>Fediverse handle</strong><span>@{{ profile_user.username }}@{{ domain }}</span></div></li>
+        <li>{% include "icons/calendar.html" %}<div><strong>Joined</strong><span><time datetime="{{ profile_user.created_at }}">{{ profile_user.created_at[:10] }}</time></span></div></li>
+      </ul>
     </div>
-  {% endif %}
-</div>
+    <div class="stat-tiles">
+      <div class="stat"><strong>{{ follower_count | number_with_delimiter }}</strong><span class="tiny">Followers</span></div>
+      <div class="stat"><strong>{{ following_count | number_with_delimiter }}</strong><span class="tiny">Following</span></div>
+    </div>
+  </aside>
 
-<div style="display:flex;gap:0;margin-top:1rem;border-bottom:2px solid var(--border)">
-  <a href="/u/{{ profile_user.username }}" style="padding:0.5rem 1rem;text-decoration:none;color:var(--text-primary);border-bottom:2px solid {% if active_tab == 'posts' %}var(--accent){% else %}transparent{% endif %};margin-bottom:-2px;font-weight:{% if active_tab == 'posts' %}bold{% else %}normal{% endif %}">Posts</a>
-  <a href="/u/{{ profile_user.username }}/comments" style="padding:0.5rem 1rem;text-decoration:none;color:var(--text-primary);border-bottom:2px solid {% if active_tab == 'comments' %}var(--accent){% else %}transparent{% endif %};margin-bottom:-2px;font-weight:{% if active_tab == 'comments' %}bold{% else %}normal{% endif %}">Comments</a>
-</div>
+  <section>
+    <nav class="segmented" aria-label="Profile sections">
+      <a href="/u/{{ profile_user.username }}" class="{% if active_tab == 'posts' or not active_tab %}is-active{% endif %}"{% if active_tab == 'posts' or not active_tab %} aria-current="page"{% endif %}>Posts</a>
+      <a href="/u/{{ profile_user.username }}/comments" class="{% if active_tab == 'comments' %}is-active{% endif %}"{% if active_tab == 'comments' %} aria-current="page"{% endif %}>Comments</a>
+    </nav>
 
-<div style="margin-top:1rem">
-  {% if active_tab == 'posts' or not active_tab %}
-    {% if posts %}
-      {% for post in posts %}
-        {% include "partials/post_card.html" %}
-      {% endfor %}
-    {% else %}
-      <p>No posts yet.</p>
-    {% endif %}
-  {% elif active_tab == 'comments' %}
-    {% if comments %}
-      {% for c in comments %}
-        <div class="card" style="margin-bottom:0.5rem">
-          <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.25rem">
-            Comment on <a href="{% if c.post_community_slug %}/c/{{ c.post_community_slug }}/posts/{{ c.comment.post_id }}{% else %}/posts/{{ c.comment.post_id }}{% endif %}" style="color:var(--link)">{{ c.post_title }}</a>
-          </div>
-          <div>{{ c.comment.body }}</div>
-          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem">{{ c.comment.published_at }}</div>
-        </div>
-      {% endfor %}
-    {% else %}
-      <p>No comments yet.</p>
-    {% endif %}
-  {% endif %}
-  {% if next_cursor %}<div class="load-more" style="text-align:center;margin:1rem 0"><a href="/u/{{ profile_user.username }}/{{ active_tab }}?cursor={{ next_cursor }}" class="btn">Load more</a></div>{% endif %}
+    <div class="feed">
+      {% if active_tab == 'posts' or not active_tab %}
+        {% if posts %}
+          {% for post in posts %}
+            {% include "partials/post_card.html" %}
+          {% endfor %}
+        {% else %}
+          <div class="card empty-state">{% include "icons/edit.html" %}<p>No posts yet.</p></div>
+        {% endif %}
+      {% elif active_tab == 'comments' %}
+        {% if comments %}
+          {% for c in comments %}
+            <article class="card">
+              <div class="post-sub" style="margin-bottom:0.4rem">
+                <span>Commented on&nbsp;</span>
+                <a href="{% if c.post_community_slug %}/c/{{ c.post_community_slug }}/posts/{{ c.comment.post_id }}{% else %}/posts/{{ c.comment.post_id }}{% endif %}">{{ c.post_title }}</a>
+                <span class="dot-sep"></span>
+                <time datetime="{{ c.comment.published_at }}">{{ c.comment.published_at[:10] }}</time>
+              </div>
+              <div class="comment-body">{{ c.comment.body }}</div>
+            </article>
+          {% endfor %}
+        {% else %}
+          <div class="card empty-state">{% include "icons/comment.html" %}<p>No comments yet.</p></div>
+        {% endif %}
+      {% endif %}
+      {% if next_cursor %}<div class="load-more"><a href="/u/{{ profile_user.username }}/{{ active_tab }}?cursor={{ next_cursor }}" class="btn">Load more</a></div>{% endif %}
+    </div>
+  </section>
 </div>
 {% endblock %}

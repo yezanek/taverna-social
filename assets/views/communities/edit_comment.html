@@ -1,15 +1,22 @@
 {% extends "layouts/base.html" %}
 {% block title %}Edit Comment - {{ community.name }} - Taverna{% endblock %}
+{% block nav_communities %}is-active{% endblock %}
 {% block content %}
-<h1>Edit Comment</h1>
-<div class="card">
-  <form method="POST" action="/c/{{ community.slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/edit">
+<div class="main-narrow">
+  <div class="page-head">
+    <h1>Edit comment</h1>
+    <p>on <a href="/c/{{ community.slug }}/posts/{{ post.id }}">{{ post.title }}</a></p>
+  </div>
+  <form method="POST" action="/c/{{ community.slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/edit" class="card form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="form-row">
+    <div class="field">
       <label for="body">Comment (Markdown)</label>
-      <textarea name="body" id="body" required class="form-textarea">{{ comment.body }}</textarea>
+      <textarea class="textarea" name="body" id="body" required>{{ comment.body }}</textarea>
     </div>
-    <button type="submit" class="btn">Save</button>
+    <div class="form-actions">
+      <a class="btn btn-ghost" href="/c/{{ community.slug }}/posts/{{ post.id }}#comment-{{ comment.id }}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
   </form>
 </div>
 {% endblock %}

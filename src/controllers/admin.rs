@@ -12,7 +12,7 @@ use tracing::instrument;
 use crate::common::config::TavernaConfig;
 use crate::controllers::csrf;
 use crate::initializers::auth_middleware::AuthUser;
-use crate::models::_entities::{community_members, posts};
+use crate::models::_entities::posts;
 use crate::models::communities::CommunityModel;
 use crate::models::feed::Cursor;
 use crate::models::users::UserModel;
@@ -55,10 +55,7 @@ pub async fn dashboard(
 
     let mut communities: Vec<serde_json::Value> = Vec::new();
     for c in community_page.items {
-        let member_count = community_members::Entity::find()
-            .filter(community_members::Column::CommunityId.eq(c.id))
-            .count(&ctx.db)
-            .await?;
+        let member_count = CommunityModel::member_count(&ctx.db, c.id).await?;
         let post_count = posts::Entity::find()
             .filter(posts::Column::CommunityId.eq(c.id))
             .filter(posts::Column::IsDeleted.eq(false))
