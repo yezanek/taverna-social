@@ -3,8 +3,10 @@
 //! Before this fix the inbox stored every incoming `Create{Note}`, including
 //! Mastodon direct messages and followers-only posts, and the public feeds
 //! showed them. The inbox now drops them; this migration removes the copies
-//! already cached. A Note is public when its `to` or `cc` (kept in
-//! `raw_json`) names the `as:Public` collection.
+//! already cached. A Note is public when its own `to` or `cc` names the
+//! `as:Public` collection; that is the inbox's rule too (`is_public` in
+//! `src/federation/activities.rs`), and `raw_json` always holds both fields
+//! because `Note` requires them, so every cached row can be classified.
 //!
 //! Comment counts bumped by purged remote replies are decremented again.
 //! The rows are a cache of remote content (ADR-017), so `down` is a no-op.

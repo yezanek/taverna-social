@@ -189,14 +189,15 @@ async fn addressed_community(
 ///
 /// Mastodon direct messages and followers-only posts are delivered to our
 /// inboxes too, but leave out `as:Public`. Taverna only shows public content
-/// (direct messages are out of scope, SPEC.md), so anything else must never be stored:
-/// the feeds and comment threads have no per-viewer visibility checks.
-fn is_public(note: &Note, activity: &Create) -> bool {
+/// (direct messages are out of scope, SPEC.md), so anything else must never
+/// be stored: the feeds and comment threads have no per-viewer visibility
+/// checks. Only the Note's own `to`/`cc` count: they define who may see the
+/// object, and they are what `raw_json` keeps, so the m011 purge applies the
+/// same rule to rows cached before this check existed.
+fn is_public(note: &Note) -> bool {
     note.to
         .iter()
         .chain(note.cc.iter())
-        .chain(activity.to.iter())
-        .chain(activity.cc.iter())
         .any(|target| matches!(target.as_str(), outbound::AP_PUBLIC | "as:Public"))
 }
 
@@ -213,7 +214,7 @@ async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), 
             note.attributed_to
         );
     }
-    if !is_public(note, &activity) {
+    if !is_public(note) {
         tracing::debug!(note = %note.id, "non-public note (DM or followers-only), ignoring");
         return Ok(());
     }

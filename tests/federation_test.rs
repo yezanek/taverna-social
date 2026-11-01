@@ -701,6 +701,30 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn test_public_activity_wrapping_private_note_is_not_stored() {
+        use sea_orm::{EntityTrait, PaginatorTrait};
+        setup();
+        let boot = crate::common::shared_boot().await;
+        let db = &boot.app_context.db;
+        let user = create_test_user(db).await;
+
+        // Only the Note's own addressing decides, matching the m011 purge.
+        let mut activity =
+            non_public_note_activity("https://remote.example/dm/wrapped", &user.ap_id);
+        activity["cc"] = serde_json::json!([AP_PUBLIC]);
+        receive(db, activity).await;
+
+        assert_eq!(
+            taverna::models::_entities::remote_posts::Entity::find()
+                .count(db)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_incoming_note_with_compact_public_is_stored() {
         setup();
         let boot = crate::common::shared_boot().await;
