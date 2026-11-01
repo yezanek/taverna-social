@@ -809,7 +809,7 @@ mod tests {
                 "object": {
                     "type": "Note", "id": note_id,
                     "attributedTo": "https://evil.example/u/mallory",
-                    "to": [], "cc": [], "content": "defaced"
+                    "to": [AP_PUBLIC], "cc": [], "content": "defaced"
                 }
             }),
         )
@@ -820,6 +820,52 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(remote.body.as_deref(), Some("Remote body"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_update_to_non_public_removes_cached_copy() {
+        setup();
+        let boot = crate::common::shared_boot().await;
+        let db = &boot.app_context.db;
+        let user = create_test_user(db).await;
+        let community = create_test_community(db, user.id).await;
+        let note_id = "https://remote.example/post/edited-private";
+        receive(db, create_note_activity(note_id, &community.ap_id)).await;
+
+        receive(
+            db,
+            serde_json::json!({
+                "type": "Update",
+                "id": "https://remote.example/updates/private",
+                "actor": REMOTE_ALICE,
+                "to": [], "cc": [],
+                "object": {
+                    "type": "Note", "id": note_id,
+                    "attributedTo": REMOTE_ALICE,
+                    "to": [&user.ap_id], "cc": [], "content": "now private"
+                }
+            }),
+        )
+        .await;
+
+        let remote = taverna::models::remote::RemotePostModel::find(db, note_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            remote.is_deleted,
+            "a post edited to non-public must be hidden"
+        );
+        assert_eq!(
+            remote.body.as_deref(),
+            Some("Remote body"),
+            "private text is never stored"
+        );
+        let feed = taverna::models::feed::home_feed(db, None, 50)
+            .await
+            .unwrap();
+        assert!(feed.items.is_empty());
     }
 
     #[tokio::test]

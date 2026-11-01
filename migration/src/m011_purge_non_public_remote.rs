@@ -28,6 +28,8 @@ const NOT_PUBLIC: &str = r#"
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
+    /// Deletes non-public cached replies and posts, fixing the comment counts
+    /// the purged replies had bumped.
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
         db.execute_unprepared(&format!(
@@ -59,8 +61,8 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 
+    /// No-op: the purged rows were cached remote content.
     async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
-        // Purged rows were a cache of remote content and cannot be restored.
         Ok(())
     }
 }

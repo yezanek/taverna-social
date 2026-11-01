@@ -262,8 +262,17 @@ async fn handle_create(db: &DatabaseConnection, activity: Create) -> Result<(), 
 }
 
 /// Update{Note}: only the author may edit, and only cached remote copies change.
+/// An edit that makes the Note non-public removes the cached copy instead, so
+/// the new private text is never shown.
 async fn handle_update(db: &DatabaseConnection, activity: Update) -> Result<(), anyhow::Error> {
     let actor = activity.actor.as_str();
+    if !is_public(&activity.object) {
+        let object = activity.object.id.as_str();
+        if !RemotePostModel::mark_deleted(db, actor, object).await? {
+            RemoteCommentModel::mark_deleted(db, actor, object).await?;
+        }
+        return Ok(());
+    }
     if !RemotePostModel::apply_update(db, actor, &activity.object).await? {
         RemoteCommentModel::apply_update(db, actor, &activity.object).await?;
     }
