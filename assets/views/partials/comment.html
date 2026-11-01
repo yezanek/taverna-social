@@ -1,56 +1,57 @@
-<div class="card comment" style="margin-left:{{ (comment.depth - 2) * 1.5 }}rem;{% if comment.depth > 8 %}border-left:2px solid var(--border);{% endif %}">
-  <div class="comment-meta" style="color:var(--text-secondary);font-size:0.85rem">
-    <a href="/u/{{ comment.author_username }}" style="color:var(--link)">{{ comment.author_username }}</a>
+{%- set indent = comment.depth - 2 -%}
+{%- if indent > 6 -%}{%- set indent = 6 -%}{%- endif -%}
+<div class="comment{% if indent > 0 %} nested{% endif %}" id="comment-{{ comment.id }}"{% if indent > 0 %} style="margin-left:{{ indent * 1.25 }}rem"{% endif %}>
+  <a href="/u/{{ comment.author_username }}" class="avatar avatar-sm" aria-hidden="true" tabindex="-1">{{ comment.author_username[:1] }}</a>
+  <div class="comment-main">
+    <div class="comment-meta">
+      <a class="post-author" href="/u/{{ comment.author_username }}">{{ comment.author_username }}</a>
+      {% if comment.author_id == post.author_id %}<span class="badge badge-primary">OP</span>{% endif %}
+      <time class="muted" datetime="{{ comment.published_at }}">{{ comment.published_at[:10] }}</time>
+    </div>
+    <div class="comment-body{% if comment.is_removed %} removed{% endif %}">{{ comment.body }}</div>
+    <div class="comment-tools">
+      <div class="vote-buttons" id="vote-{{ comment.id }}">
+        <button class="vote-btn upvote"
+          hx-post="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/vote"
+          hx-vals='{"vote":"1","csrf_token":"{{ csrf_token }}"}'
+          hx-target="#vote-{{ comment.id }}"
+          hx-swap="outerHTML"
+          aria-label="Upvote" title="Upvote">{% include "icons/arrow-up.html" %}</button>
+        <span class="score{% if comment.score > 0 %} positive{% elif comment.score < 0 %} negative{% endif %}">{{ comment.score }}</span>
+        <button class="vote-btn downvote"
+          hx-post="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/vote"
+          hx-vals='{"vote":"-1","csrf_token":"{{ csrf_token }}"}'
+          hx-target="#vote-{{ comment.id }}"
+          hx-swap="outerHTML"
+          aria-label="Downvote" title="Downvote">{% include "icons/arrow-down.html" %}</button>
+      </div>
+      {% if current_user %}
+        {% if current_user.id == comment.author_id %}
+          <a class="action" href="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/edit">{% include "icons/edit.html" %} Edit</a>
+          <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/delete" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="action">{% include "icons/trash.html" %} Delete</button>
+          </form>
+        {% endif %}
+        {% if can_moderate and not comment.is_removed %}
+          <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/remove" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="action">{% include "icons/eye-off.html" %} Remove</button>
+          </form>
+        {% endif %}
+        {% if not post.is_locked %}
+          <details class="reply-form">
+            <summary class="action">{% include "icons/comment.html" %} Reply</summary>
+            <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="parent_id" value="{{ comment.id }}">
+              <label class="visually-hidden" for="reply-{{ comment.id }}">Reply to {{ comment.author_username }}</label>
+              <textarea id="reply-{{ comment.id }}" name="body" required class="textarea" placeholder="Write a reply…"></textarea>
+              <div class="form-actions" style="margin-top:0.5rem"><button type="submit" class="btn btn-primary btn-sm">Reply</button></div>
+            </form>
+          </details>
+        {% endif %}
+      {% endif %}
+    </div>
   </div>
-  <div class="comment-body" style="margin:0.25rem 0;color:var(--text-primary);font-size:0.95rem">
-    {{ comment.body }}
-  </div>
-  <div class="vote-buttons" id="vote-{{ comment.id }}" style="display:flex;align-items:center;gap:0.25rem;margin-top:0.25rem">
-    <button class="vote-btn upvote"
-      hx-post="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/vote"
-      hx-vals='{"vote":"1","csrf_token":"{{ csrf_token }}"}'
-      hx-target="#vote-{{ comment.id }}"
-      hx-swap="outerHTML"
-      title="Upvote"
-      style="background:none;border:none;color:var(--upvote);cursor:pointer;font-size:1rem;padding:0 0.2rem">
-      ▲
-    </button>
-    <span class="score" style="font-weight:bold;font-size:0.9rem;min-width:1.2rem;text-align:center;color:var(--text-secondary)">
-      {{ comment.score }}
-    </span>
-    <button class="vote-btn downvote"
-      hx-post="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/vote"
-      hx-vals='{"vote":"-1","csrf_token":"{{ csrf_token }}"}'
-      hx-target="#vote-{{ comment.id }}"
-      hx-swap="outerHTML"
-      title="Downvote"
-      style="background:none;border:none;color:var(--downvote);cursor:pointer;font-size:1rem;padding:0 0.2rem">
-      ▼
-    </button>
-  </div>
-  {% if current_user %}
-    {% if current_user.id == comment.author_id %}
-    | <a href="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/edit" style="color:var(--link);font-size:0.85rem">Edit</a>
-    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/delete" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:0.85rem;padding:0">Delete</button>
-    </form>
-    {% endif %}
-    {% if can_moderate and not comment.is_removed %}
-    <form method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments/{{ comment.id }}/remove" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:0.85rem;padding:0">Remove</button>
-    </form>
-    {% endif %}
-    <button class="reply-btn" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:0.85rem;padding:0;margin-top:0.25rem"
-      onclick="document.getElementById('reply-form-{{ comment.id }}').style.display='block'">
-      Reply
-    </button>
-    <form id="reply-form-{{ comment.id }}" method="POST" action="/c/{{ slug }}/posts/{{ post.id }}/comments" style="display:none;margin-top:0.5rem">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <input type="hidden" name="parent_id" value="{{ comment.id }}">
-      <textarea name="body" required style="width:100%;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem"></textarea>
-      <button type="submit" class="btn" style="margin-top:0.25rem">Reply</button>
-    </form>
-  {% endif %}
 </div>

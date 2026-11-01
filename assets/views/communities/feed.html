@@ -1,36 +1,100 @@
 {% extends "layouts/base.html" %}
 {% block title %}{{ community.name }} - Taverna{% endblock %}
+{% block nav_communities %}is-active{% endblock %}
 {% block content %}
-<div class="card">
-  <h1>{{ community.name }}</h1>
-  {% if description_rendered %}
-    <div class="description">{{ description_rendered | safe }}</div>
-  {% endif %}
-  <div style="margin-top:0.5rem">
-    {% if is_member %}
-      <form method="POST" action="/c/{{ community.slug }}/leave" style="display:inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn">Leave</button>
-      </form>
-      <a href="/c/{{ community.slug }}/new" class="btn" style="margin-left:0.5rem">New Post</a>
-    {% else %}
-      <form method="POST" action="/c/{{ community.slug }}/join" style="display:inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn">Join</button>
-      </form>
-    {% endif %}
-    {% if can_moderate %}
-      <a href="/c/{{ community.slug }}/settings" class="btn" style="margin-left:0.5rem">Settings</a>
-    {% endif %}
+<section class="group-header">
+  <div class="cover" aria-hidden="true"></div>
+  <div class="group-header-body">
+    <span class="group-icon lg" aria-hidden="true">{{ community.name[:1] }}</span>
+    <div class="group-header-title">
+      <h1>{{ community.name }}</h1>
+      <div class="group-header-meta">
+        {% include "icons/globe.html" %}
+        <span>{% if community.is_local %}Public community{% else %}Federated community{% endif %}</span>
+        <span class="dot-sep"></span>
+        <strong>{{ member_count | number_with_delimiter }} {% if member_count == 1 %}member{% else %}members{% endif %}</strong>
+        {% if community.is_local %}
+          <span class="dot-sep"></span>
+          <span title="Follow this handle from any ActivityPub server">!{{ community.slug }}@{{ domain }}</span>
+        {% endif %}
+        {% if community.is_nsfw %}<span class="badge badge-danger">NSFW</span>{% endif %}
+      </div>
+    </div>
+    <div class="group-header-actions">
+      {% if is_member %}
+        <form method="POST" action="/c/{{ community.slug }}/leave" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn" title="Leave this community">{% include "icons/check.html" %} Joined</button>
+        </form>
+        <a href="/c/{{ community.slug }}/new" class="btn btn-primary">{% include "icons/edit.html" %} New post</a>
+      {% elif current_user %}
+        <form method="POST" action="/c/{{ community.slug }}/join" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn btn-primary">{% include "icons/plus.html" %} Join</button>
+        </form>
+      {% else %}
+        <a href="/login" class="btn btn-primary">Log in to join</a>
+      {% endif %}
+      {% if can_moderate %}
+        <a href="/c/{{ community.slug }}/settings" class="btn btn-icon" title="Community settings" aria-label="Community settings">{% include "icons/settings.html" %}</a>
+      {% endif %}
+    </div>
   </div>
-</div>
+  <nav class="tabs" aria-label="Community sections">
+    <a class="tab is-active" href="/c/{{ community.slug }}" aria-current="page">Discussion</a>
+    <a class="tab" href="#about">About</a>
+  </nav>
+</section>
 
-{% if posts %}
-  {% for post in posts %}
-    {% include "partials/post_card.html" %}
-  {% endfor %}
-{% else %}
-  <p>No posts yet in this community.</p>
-{% endif %}
-{% if next_cursor %}<div class="load-more" style="text-align:center;margin:1rem 0"><a href="?cursor={{ next_cursor }}" class="btn">Load more</a></div>{% endif %}
+<div class="page-grid">
+  <section class="feed" aria-label="Posts">
+    {% if is_member %}
+      <div class="card composer">
+        <span class="avatar">{% if current_user.avatar_url %}<img src="{{ current_user.avatar_url }}" alt="">{% else %}{{ current_user.username[:1] }}{% endif %}</span>
+        <a class="composer-input" href="/c/{{ community.slug }}/new">Write something to {{ community.name }}…</a>
+      </div>
+    {% endif %}
+
+    {% if posts %}
+      {% for post in posts %}
+        {% include "partials/post_card.html" %}
+      {% endfor %}
+      {% if next_cursor %}<div class="load-more"><a href="?cursor={{ next_cursor }}" class="btn">Load more</a></div>{% endif %}
+    {% else %}
+      <div class="card empty-state">
+        {% include "icons/comment.html" %}
+        <h2>No posts yet</h2>
+        <p>{% if is_member %}Start the first discussion in this community.{% else %}Join to start the first discussion.{% endif %}</p>
+        {% if is_member %}<a class="btn btn-primary" href="/c/{{ community.slug }}/new">Create a post</a>{% endif %}
+      </div>
+    {% endif %}
+  </section>
+
+  <aside class="rail" id="about" aria-label="About this community">
+    <div class="card">
+      <h2 class="card-title">About</h2>
+      {% if description_rendered %}
+        <div class="prose variant">{{ description_rendered | safe }}</div>
+      {% else %}
+        <p class="muted">This community has no description yet.</p>
+      {% endif %}
+      <ul class="info-list">
+        <li>{% include "icons/globe.html" %}<div><strong>Public</strong><span>Anyone can see who posts here and what they post.</span></div></li>
+        {% if community.posting_restricted %}
+          <li>{% include "icons/lock.html" %}<div><strong>Moderators post</strong><span>Only moderators can start new posts. Members can comment.</span></div></li>
+        {% else %}
+          <li>{% include "icons/users.html" %}<div><strong>Open posting</strong><span>Any member can start a discussion.</span></div></li>
+        {% endif %}
+        <li>{% include "icons/calendar.html" %}<div><strong>History</strong><span>Created on <time datetime="{{ community.created_at }}">{{ community.created_at[:10] }}</time>.</span></div></li>
+      </ul>
+    </div>
+    {% if can_moderate %}
+      <div class="card recessed">
+        <h2 class="card-title">Moderation</h2>
+        <p class="variant small">You moderate this community.</p>
+        <a class="btn btn-block" href="/c/{{ community.slug }}/settings" style="margin-top:0.75rem">{% include "icons/settings.html" %} Settings and bans</a>
+      </div>
+    {% endif %}
+  </aside>
+</div>
 {% endblock %}

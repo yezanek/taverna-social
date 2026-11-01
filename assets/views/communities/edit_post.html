@@ -1,23 +1,30 @@
 {% extends "layouts/base.html" %}
 {% block title %}Edit Post - {{ community.name }} - Taverna{% endblock %}
+{% block nav_communities %}is-active{% endblock %}
 {% block content %}
-<h1>Edit Post in {{ community.name }}</h1>
-<div class="card">
-  <form method="POST" action="/c/{{ community.slug }}/posts/{{ post.id }}/edit">
+<div class="main-narrow">
+  <div class="page-head">
+    <h1>Edit post</h1>
+    <p>in <a href="/c/{{ community.slug }}">{{ community.name }}</a></p>
+  </div>
+  <form method="POST" action="/c/{{ community.slug }}/posts/{{ post.id }}/edit" class="card form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="form-row">
+    <div class="field">
       <label for="title">Title</label>
-      <input type="text" name="title" id="title" required maxlength="300" class="form-input" value="{{ post.title }}">
+      <input class="input" type="text" name="title" id="title" required maxlength="300" value="{{ post.title }}">
     </div>
-    <div class="form-row">
+    <div class="field">
       <label for="body">Body (Markdown)</label>
-      <textarea name="body" id="body" class="form-textarea">{{ post.body }}</textarea>
+      <textarea class="textarea" name="body" id="body" rows="8">{{ post.body }}</textarea>
     </div>
-    <div class="form-row">
+    <div class="field">
       <label for="url">URL</label>
-      <input type="url" name="url" id="url" class="form-input" value="{{ post.url }}">
+      <input class="input" type="url" name="url" id="url" value="{{ post.url }}">
     </div>
-    <button type="submit" class="btn">Save</button>
+    <div class="form-actions">
+      <a class="btn btn-ghost" href="/c/{{ community.slug }}/posts/{{ post.id }}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
   </form>
 </div>
 {% endblock %}

@@ -1,65 +1,76 @@
 {% extends "layouts/base.html" %}
 {% block title %}Settings - {{ community.name }} - Taverna{% endblock %}
+{% block nav_communities %}is-active{% endblock %}
 {% block content %}
-<h1>Community Settings: {{ community.name }}</h1>
-<div class="card">
-  <form method="POST" action="/c/{{ community.slug }}/settings">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div style="margin-bottom:0.5rem">
-      <label for="name">Name</label>
-      <input type="text" name="name" id="name" value="{{ community.name }}" style="width:100%;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">
+<div class="main-narrow">
+  <div class="page-head row" style="justify-content:flex-start;gap:1rem">
+    <span class="group-icon">{{ community.name[:1] }}</span>
+    <div>
+      <h1>Community settings</h1>
+      <p style="margin:0"><a href="/c/{{ community.slug }}">{{ community.name }}</a></p>
     </div>
-    <div style="margin-bottom:0.5rem">
-      <label for="description">Description (Markdown)</label>
-      <textarea name="description" id="description" style="width:100%;min-height:100px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">{{ community.description }}</textarea>
-    </div>
-    <div style="margin-bottom:0.5rem">
-      <label>
-        <input type="checkbox" name="is_nsfw" {% if community.is_nsfw %}checked{% endif %}>
-        NSFW
-      </label>
-    </div>
-    <div style="margin-bottom:0.5rem">
-      <label>
-        <input type="checkbox" name="posting_restricted" {% if community.posting_restricted %}checked{% endif %}>
-        Restrict posting to moderators
-      </label>
-    </div>
-    <button type="submit" class="btn">Save</button>
-  </form>
-</div>
+  </div>
 
-<div class="card" id="bans">
-  <h2>Banned users</h2>
-  <p>Banned users can't post or comment in this community.</p>
-  {% if ban_error %}<div role="alert" style="color:var(--accent);margin-bottom:1rem">{{ ban_error }}</div>{% endif %}
-  <form method="POST" action="/c/{{ community.slug }}/bans">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div style="margin-bottom:0.5rem">
-      <label for="ban-username">Username</label>
-      <input type="text" name="username" id="ban-username" required style="width:100%;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">
-    </div>
-    <div style="margin-bottom:0.5rem">
-      <label for="ban-reason">Reason (optional)</label>
-      <input type="text" name="reason" id="ban-reason" style="width:100%;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:0.5rem">
-    </div>
-    <button type="submit" class="btn">Ban user</button>
-  </form>
-  {% if bans %}
-    <ul style="list-style:none;padding:0;margin-top:1rem">
-      {% for ban in bans %}
-        <li style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0;border-top:1px solid var(--border)">
-          <a href="/u/{{ ban.username }}">{{ ban.username }}</a>
-          {% if ban.reason %}<span style="color:var(--text-secondary)">— {{ ban.reason }}</span>{% endif %}
-          <form method="POST" action="/c/{{ community.slug }}/bans/{{ ban.username }}/delete" style="margin-left:auto">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn">Unban</button>
-          </form>
-        </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p>No one is banned.</p>
-  {% endif %}
+  <section class="card form-section">
+    <h2>General</h2>
+    <p>How the community appears to members and visitors.</p>
+    <form method="POST" action="/c/{{ community.slug }}/settings" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field">
+        <label for="name">Name</label>
+        <input class="input" type="text" name="name" id="name" value="{{ community.name }}">
+      </div>
+      <div class="field">
+        <label for="description">Description (Markdown)</label>
+        <textarea class="textarea" name="description" id="description" rows="5">{{ community.description }}</textarea>
+      </div>
+      <label class="check">
+        <input type="checkbox" name="is_nsfw" {% if community.is_nsfw %}checked{% endif %}>
+        <div><strong>NSFW</strong><span>Content is not suitable for all audiences.</span></div>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="posting_restricted" {% if community.posting_restricted %}checked{% endif %}>
+        <div><strong>Restrict posting to moderators</strong><span>Members can still comment and vote.</span></div>
+      </label>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Save</button></div>
+    </form>
+  </section>
+
+  <section class="card form-section" id="bans">
+    <h2>Banned users</h2>
+    <p>Banned users can't post or comment in this community.</p>
+    {% if ban_error %}<div class="alert" role="alert">{{ ban_error }}</div>{% endif %}
+    <form method="POST" action="/c/{{ community.slug }}/bans" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field">
+        <label for="ban-username">Username</label>
+        <input class="input" type="text" name="username" id="ban-username" required>
+      </div>
+      <div class="field">
+        <label for="ban-reason">Reason (optional)</label>
+        <input class="input" type="text" name="reason" id="ban-reason">
+      </div>
+      <div class="form-actions"><button type="submit" class="btn btn-danger">{% include "icons/ban.html" %} Ban user</button></div>
+    </form>
+    {% if bans %}
+      <ul class="ban-list">
+        {% for ban in bans %}
+          <li>
+            <span class="avatar avatar-xs">{{ ban.username[:1] }}</span>
+            <div>
+              <a href="/u/{{ ban.username }}">{{ ban.username }}</a>
+              {% if ban.reason %}<div class="small variant">{{ ban.reason }}</div>{% endif %}
+            </div>
+            <form method="POST" action="/c/{{ community.slug }}/bans/{{ ban.username }}/delete">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-sm">Unban</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted small" style="margin-top:1rem">No one is banned.</p>
+    {% endif %}
+  </section>
 </div>
 {% endblock %}

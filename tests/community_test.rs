@@ -273,8 +273,8 @@ mod tests {
         assert_eq!(response.status_code(), 200);
         let body = response.text();
         assert!(
-            body.contains("action=\"/c/\""),
-            "new community page should contain a form posting to /c/"
+            body.contains("action=\"/c\""),
+            "new community page should contain a form posting to /c"
         );
     }
 }
