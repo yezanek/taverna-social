@@ -59,6 +59,10 @@ settings:
     http_signature_expiry_seconds: <%= get_env(name="HTTP_SIGNATURE_EXPIRY_SECONDS", default="30") %>
   rate_limiting:
     enabled: <%= get_env(name="RATE_LIMITING_ENABLED", default="true") %>
+    # Proxies whose X-Forwarded-For is trusted, as IPs or CIDRs,
+    # comma-separated (e.g. TRUSTED_PROXIES="127.0.0.1,::1"). Leave empty
+    # when the app is reached directly.
+    trusted_proxies: "<%= get_env(name="TRUSTED_PROXIES", default="") %>"
 
 # In-memory cache behind `ctx.cache` (NodeInfo counts). Loco's default is the
 # null cache, which would turn caching off.
