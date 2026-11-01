@@ -78,7 +78,7 @@ Also add to the `users` table (new migration column):
 ```sql
 ALTER TABLE users ADD COLUMN email_verified   BOOL NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN standing_score   INT  NOT NULL DEFAULT 0;
-ALTER TABLE users ADD COLUMN suspended_at     TIMESTAMPTZ;   -- NULL = never suspended
+ALTER TABLE users ADD COLUMN suspended_at     TIMESTAMPTZ;   -- NULL = not currently suspended
 ```
 
 ---
@@ -248,7 +248,7 @@ pub async fn check_community_creation_eligibility(
         }
     }
 
-    // Disqualification: ever suspended
+    // Disqualification: currently suspended
     if settings.disqualify_if_suspended && user.suspended_at.is_some() {
         reasons.push("Your account has a suspension history.".into());
     }
@@ -290,7 +290,7 @@ Community creation:
     [x] Email must be verified
     [x] Minimum standing score: [0]
     [ ] Disqualify if content was removed by a moderator
-    [ ] Disqualify if account was ever suspended
+    [ ] Disqualify if account is currently suspended
 ```
 
 All changes take effect immediately (no restart needed — read from DB per request).
@@ -310,8 +310,9 @@ Add to the existing admin dashboard:
 - Button: "Force verify email" (sets `email_verified = true` without token)
 
 Suspension is separate from the existing `is_banned`. Banning is permanent removal.
-Suspension is a reversible administrative action that also triggers the
-`disqualify_if_suspended` eligibility check.
+Suspension is a reversible administrative action. While it lasts, it also
+triggers the `disqualify_if_suspended` eligibility check; unsuspending clears
+`suspended_at` and with it the disqualification.
 
 ---
 

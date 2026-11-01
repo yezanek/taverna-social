@@ -213,6 +213,11 @@ mod tests {
         let result = eligibility::check_eligibility(db, user.id).await.unwrap();
         assert!(!result.eligible);
         assert!(result.reasons.iter().any(|r| r.contains("suspended")));
+
+        // Only a current suspension disqualifies (SPEC §3.7, #15).
+        UserModel::set_suspended(db, user.id, false).await.unwrap();
+        let result = eligibility::check_eligibility(db, user.id).await.unwrap();
+        assert!(!result.reasons.iter().any(|r| r.contains("suspended")));
     }
 
     #[tokio::test]
