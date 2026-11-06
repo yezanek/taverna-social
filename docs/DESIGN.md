@@ -142,7 +142,8 @@ Applied in `App::after_routes`, outermost last:
 3. **`TavernaConfig` extension** for handlers.
 4. **Session refresh**: when the 1-hour access token has expired, renews it
    from the 7-day refresh token (ADR-022).
-5. **Theme**: reads the `taverna_theme` cookie and exposes the current theme.
+5. **Theme**: reads the `taverna_theme` and `taverna_accent` cookies and
+   exposes the current theme and accent colour.
 6. **`FederationMiddleware`** from `activitypub_federation`.
 7. **Content negotiation**: the same URL serves HTML or ActivityPub JSON
    depending on the `Accept` header (ADR-007).
@@ -153,8 +154,8 @@ Rate limiting is added by its own initializer (§9).
 
 ### 2.5 Rendering
 
-Handlers render through the `Views` extractor, which injects the theme and
-shared context into every template once (ADR-027). Templates extend
+Handlers render through the `Views` extractor, which injects the theme,
+accent colour and shared context into every template once (ADR-027). Templates extend
 `layouts/base.html`; reusable pieces live in `partials/` (post card,
 comment, vote buttons, follow button) and `icons/`. HTMX endpoints such as
 voting return fragments only.
@@ -205,7 +206,7 @@ except where a natural ActivityPub id is the key, and all timestamps are
 
 | Table | Holds | Notes |
 |---|---|---|
-| `users` | Local accounts | username, optional email and password hash, profile, RSA keypair, `is_admin`, `is_banned`, `suspended_at`, `email_verified`, `standing_score` |
+| `users` | Local accounts | username, optional email and password hash, profile, RSA keypair, `is_admin`, `is_banned`, `suspended_at`, `email_verified`, `standing_score`, appearance (`theme`, `accent_color`) |
 | `communities` | Communities | slug, name, Markdown description, keypair, `is_nsfw`, `posting_restricted` (moderators only) |
 | `posts` | Local posts | `community_id` is NULL for profile posts; denormalised `score` and `comment_count` (ADR-006); `is_deleted`, `is_removed`, `is_locked`, `is_pinned` |
 | `comments` | Local comments | `parent_id` and an `ltree` `path` for threading (ADR-005) |
@@ -326,6 +327,7 @@ between HTML and ActivityPub through content negotiation.
 | GET/POST | `/register`, `/login`; POST `/logout` | Accounts |
 | GET | `/verify-email`; POST `/resend-verification` | Email verification |
 | POST | `/theme` | Set the theme cookie |
+| POST | `/settings/appearance` | Save the account's default theme and accent colour |
 | GET / POST | `/c`, `/c/new` | List and create communities |
 | GET | `/c/{slug}` | Community feed |
 | GET / POST | `/c/{slug}/new`, `/c/{slug}/posts` | New post |
@@ -366,6 +368,19 @@ of CSS custom properties in `assets/static/theme.css`. The theme is stored
 in the `taverna_theme` cookie (one year, `SameSite=Lax`), set by
 `POST /theme`, and written to `<html data-theme="…">` by the base layout.
 Templates use `var(--…)` properties only, never hard-coded colours.
+
+Logged-in users pick a default theme and an accent colour (any RGB colour
+from a native colour picker) under Settings → Appearance. Both are stored
+on the account (`users.theme`, `users.accent_color`, null meaning the
+default) and copied into the `taverna_theme` and `taverna_accent` cookies
+when saved and on every login, so the choice follows the account to a new
+browser while page rendering still reads cookies only. From the one accent
+colour, `src/common/accent.rs` derives the accent tokens (`--primary`,
+`--primary-container`, `--on-primary`, `--primary-soft`, `--upvote`,
+`--cover-a`) for all three themes and the base layout inlines them after
+`theme.css`. `--primary` is pushed towards white (dark) or black
+(light/sepia) until it has 4.5:1 contrast with the surface, so any colour
+stays readable.
 
 ---
 

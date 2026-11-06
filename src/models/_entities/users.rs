@@ -44,6 +44,14 @@ pub struct Model {
     pub last_fetched_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    /// Default theme (`light`/`dark`/`sepia`); null for the instance default.
+    #[sea_orm(column_type = "Text", nullable)]
+    #[serde(skip_serializing)]
+    pub theme: Option<String>,
+    /// Custom accent colour as `#rrggbb`; null for the theme's own accent.
+    #[sea_orm(column_type = "Text", nullable)]
+    #[serde(skip_serializing)]
+    pub accent_color: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

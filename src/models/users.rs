@@ -1,3 +1,5 @@
+use crate::common::accent::Rgb;
+use crate::initializers::theme_middleware::Theme;
 use crate::models::_entities::{users, users::ActiveModel};
 use crate::models::feed::{Cursor, Page};
 use activitypub_federation::http_signatures::generate_actor_keypair;
@@ -111,6 +113,8 @@ impl UserModel {
             last_fetched_at: Set(None),
             created_at: Set(chrono::Utc::now().into()),
             updated_at: Set(chrono::Utc::now().into()),
+            theme: Set(None),
+            accent_color: Set(None),
         };
 
         user.insert(db).await.map_err(|e| match e.sql_err() {
@@ -243,6 +247,26 @@ impl UserModel {
         active.updated_at = Set(chrono::Utc::now().into());
         let result = active.update(db).await?;
         Ok(result)
+    }
+
+    /// Saves a user's default theme and accent colour (`None` = instance
+    /// default). Callers pass already-validated values.
+    #[instrument(skip(db))]
+    pub async fn update_appearance(
+        db: &DatabaseConnection,
+        user_id: uuid::Uuid,
+        theme: Option<Theme>,
+        accent: Option<Rgb>,
+    ) -> Result<users::Model, UserError> {
+        let user = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or(UserError::Validation("User not found".to_string()))?;
+        let mut active: users::ActiveModel = user.into();
+        active.theme = Set(theme.map(|t| t.as_str().to_string()));
+        active.accent_color = Set(accent.map(Rgb::to_hex));
+        active.updated_at = Set(chrono::Utc::now().into());
+        Ok(active.update(db).await?)
     }
 
     /// Updates a user's email address, checking for duplicates. Returns true

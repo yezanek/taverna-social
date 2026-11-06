@@ -5,7 +5,7 @@
 <div class="main-narrow">
   <div class="page-head">
     <h1>Settings</h1>
-    <p>Manage your profile, password and standing.</p>
+    <p>Manage your profile, appearance, password and standing.</p>
   </div>
 
   <section class="card form-section">
@@ -31,6 +31,33 @@
         <input class="input" type="email" id="email" name="email" value="{{ email | default(value='') }}">
       </div>
       <div class="form-actions"><button type="submit" class="btn btn-primary">Save settings</button></div>
+    </form>
+  </section>
+
+  <section class="card form-section" id="appearance">
+    <h2>Appearance</h2>
+    <p>Your default theme and accent colour. They are saved to your account and applied whenever you log in.</p>
+    <form method="POST" action="/settings/appearance" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field">
+        <span class="label" id="theme-label">Default theme</span>
+        <div class="segmented" role="radiogroup" aria-labelledby="theme-label">
+          <label><input type="radio" name="theme" value="light"{% if saved_theme == "light" %} checked{% endif %}>Light</label>
+          <label><input type="radio" name="theme" value="dark"{% if saved_theme == "dark" %} checked{% endif %}>Dark</label>
+          <label><input type="radio" name="theme" value="sepia"{% if saved_theme == "sepia" %} checked{% endif %}>Paper</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="accent">Accent colour</label>
+        <div class="accent-picker">
+          <input class="color-input" type="color" id="accent" name="accent" value="{% if saved_accent %}{{ saved_accent }}{% else %}{{ default_accent }}{% endif %}">
+          <span class="help">{% if saved_accent %}Custom colour {{ saved_accent }}.{% else %}Using the theme's default amber.{% endif %} Link and button shades are adjusted per theme so text stays readable.</span>
+        </div>
+      </div>
+      <div class="form-actions">
+        {% if saved_accent %}<button type="submit" name="accent_reset" value="1" class="btn btn-ghost">Reset accent to default</button>{% endif %}
+        <button type="submit" class="btn btn-primary">Save appearance</button>
+      </div>
     </form>
   </section>
 
