@@ -176,7 +176,7 @@ mod tests {
     fn parses_and_normalises_hex() {
         assert_eq!(Rgb::parse("#2F80ED"), Some(Rgb(0x2f, 0x80, 0xed)));
         assert_eq!(Rgb::parse(" #000000 "), Some(BLACK));
-        assert_eq!(Rgb::parse("#2f80ed").unwrap().to_hex(), "#2f80ed");
+        assert_eq!(Rgb::parse("#2f80ed").map(Rgb::to_hex).as_deref(), Some("#2f80ed"));
     }
 
     #[test]
