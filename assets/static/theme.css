@@ -826,6 +826,20 @@ img { max-width: 100%; }
 .check strong { display: block; font-size: 0.875rem; }
 .check span { display: block; font-size: 0.8125rem; color: var(--on-surface-variant); }
 
+.accent-picker { display: flex; align-items: center; gap: 0.85rem; }
+.color-input {
+  flex: none;
+  width: 56px; height: 40px;
+  padding: 3px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-md);
+  background: var(--surface-high);
+  cursor: pointer;
+}
+.color-input::-webkit-color-swatch-wrapper { padding: 0; }
+.color-input::-webkit-color-swatch { border: none; border-radius: var(--radius-sm); }
+.color-input::-moz-color-swatch { border: none; border-radius: var(--radius-sm); }
+
 .form-actions { display: flex; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap; }
 
 /* Post type toggle: show the URL or the body field without JavaScript. */

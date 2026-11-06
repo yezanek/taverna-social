@@ -3,30 +3,36 @@ use axum::http::request::Parts;
 use axum::response::Response;
 use loco_rs::controller::views::{ViewEngine, ViewRenderer, engines::TeraView};
 use loco_rs::prelude::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::initializers::theme_middleware::{CurrentTheme, Theme};
+use crate::initializers::theme_middleware::CurrentTheme;
 
-/// The view engine bundled with the request's theme (SPEC §3.5).
+/// The view engine bundled with the request's theme and accent (SPEC §3.5).
 ///
 /// Handlers take `views: Views` and call `views.render(template, data)`; the
-/// theme is added to every template's context here, so no handler passes it.
+/// theme and accent are added to every template's context here, so no
+/// handler passes them.
 #[derive(Clone)]
 pub struct Views {
     engine: TeraView,
-    theme: String,
+    appearance: CurrentTheme,
 }
 
 impl Views {
-    /// Renders `template` with `data` plus `theme` into an HTML response.
+    /// Renders `template` with `data` plus the appearance into an HTML response.
     pub fn render(&self, template: &str, data: Value) -> Result<Response> {
         format::html(&self.render_string(template, data)?)
     }
 
-    /// Renders `template` with `data` plus `theme` into a string.
+    /// Renders `template` with `data` plus the appearance into a string.
+    /// Values the handler already set win.
     pub fn render_string(&self, template: &str, mut data: Value) -> Result<String> {
-        if let Some(obj) = data.as_object_mut() {
-            obj.entry("theme").or_insert_with(|| json!(self.theme));
+        if let (Some(obj), Value::Object(appearance)) =
+            (data.as_object_mut(), self.appearance.context())
+        {
+            for (key, value) in appearance {
+                obj.entry(key).or_insert(value);
+            }
         }
         self.engine.render(template, data)
     }
@@ -41,11 +47,12 @@ impl<S: Send + Sync> FromRequestParts<S> for Views {
             .get::<ViewEngine<TeraView>>()
             .cloned()
             .ok_or_else(|| Error::string("view engine missing from request extensions"))?;
-        // The theme middleware always sets it; fall back to the default theme.
-        let theme = parts
+        // The theme middleware always sets it; fall back to the defaults.
+        let appearance = parts
             .extensions
             .get::<CurrentTheme>()
-            .map_or_else(|| Theme::default().as_str().to_string(), |t| t.0.clone());
-        Ok(Self { engine, theme })
+            .copied()
+            .unwrap_or_default();
+        Ok(Self { engine, appearance })
     }
 }

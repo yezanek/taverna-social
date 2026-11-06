@@ -5,9 +5,11 @@ use loco_rs::prelude::*;
 use serde::Deserialize;
 use tracing::instrument;
 
+use crate::common::accent::{ACCENT_COOKIE, Rgb};
 use crate::common::config::TavernaConfig;
 use crate::controllers::csrf::same_origin;
 use crate::initializers::theme_middleware::{THEME_COOKIE, Theme};
+use crate::models::_entities::users;
 
 /// Form containing the selected theme value.
 #[derive(Debug, Deserialize)]
@@ -25,15 +27,60 @@ pub async fn set_theme(
     Form(form): Form<ThemeForm>,
 ) -> Result<Response> {
     let theme = Theme::parse(&form.theme).unwrap_or_default();
-    let cookie = Cookie::build((THEME_COOKIE, theme.as_str()))
+    let redirect_to = local_referer(&headers, &taverna).unwrap_or_else(|| "/".to_string());
+    Ok((jar.add(theme_cookie(theme)), format::redirect(&redirect_to)).into_response())
+}
+
+/// A one-year preference cookie readable by the whole site.
+fn preference_cookie(
+    name: &'static str,
+    value: String,
+    max_age: time::Duration,
+) -> Cookie<'static> {
+    Cookie::build((name, value))
         .http_only(false)
         .same_site(SameSite::Lax)
         .path("/")
-        .max_age(time::Duration::days(365))
-        .build();
+        .max_age(max_age)
+        .build()
+}
 
-    let redirect_to = local_referer(&headers, &taverna).unwrap_or_else(|| "/".to_string());
-    Ok((jar.add(cookie), format::redirect(&redirect_to)).into_response())
+/// The `taverna_theme` cookie for `theme`.
+#[must_use]
+pub fn theme_cookie(theme: Theme) -> Cookie<'static> {
+    preference_cookie(
+        THEME_COOKIE,
+        theme.as_str().to_string(),
+        time::Duration::days(365),
+    )
+}
+
+/// The `taverna_accent` cookie for `accent` (hex digits without `#`, which
+/// cookie encoding would escape); `None` expires the cookie so the theme's
+/// own accent is used.
+#[must_use]
+pub fn accent_cookie(accent: Option<Rgb>) -> Cookie<'static> {
+    match accent {
+        Some(rgb) => preference_cookie(
+            ACCENT_COOKIE,
+            rgb.to_hex()[1..].to_string(),
+            time::Duration::days(365),
+        ),
+        None => preference_cookie(ACCENT_COOKIE, String::new(), time::Duration::ZERO),
+    }
+}
+
+/// Copies a user's saved theme and accent into `jar` (used on login), so
+/// the account's appearance follows it to a new browser. A user with no
+/// saved theme keeps whatever this browser already has.
+pub fn apply_saved_appearance(jar: CookieJar, user: &users::Model) -> CookieJar {
+    let jar = match user.theme.as_deref().and_then(Theme::parse) {
+        Some(theme) => jar.add(theme_cookie(theme)),
+        None => jar,
+    };
+    jar.add(accent_cookie(
+        user.accent_color.as_deref().and_then(Rgb::parse),
+    ))
 }
 
 /// The Referer's path and query when it points at this instance. Anything

@@ -207,6 +207,7 @@ pub async fn login(
         secure_cookies,
     );
 
+    let jar = crate::controllers::theme::apply_saved_appearance(jar, &user);
     let response = format::redirect("/").into_response();
     Ok((jar.add(access_cookie).add(refresh_cookie), response).into_response())
 }

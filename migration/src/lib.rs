@@ -13,6 +13,7 @@ mod m008_eligibility;
 mod m009_federated_cache;
 mod m010_performance_indexes;
 mod m011_purge_non_public_remote;
+mod m012_user_appearance;
 
 pub struct Migrator;
 
@@ -31,6 +32,7 @@ impl MigratorTrait for Migrator {
             Box::new(m009_federated_cache::Migration),
             Box::new(m010_performance_indexes::Migration),
             Box::new(m011_purge_non_public_remote::Migration),
+            Box::new(m012_user_appearance::Migration),
         ]
     }
 }

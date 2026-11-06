@@ -17,7 +17,7 @@ use crate::controllers::{
     admin, auth, communities, federation, home, posts, setup, theme, users, verify,
 };
 use crate::initializers;
-use crate::initializers::theme_middleware::extract_theme;
+use crate::initializers::theme_middleware::CurrentTheme;
 use axum::Extension;
 use axum::response::{IntoResponse, Response};
 use loco_rs::controller::views::{ViewEngine, engines::TeraView};
@@ -166,7 +166,8 @@ impl Hooks for App {
                 "/settings",
                 get(users::settings_form).post(users::update_settings),
             )
-            .add("/settings/password", post(users::change_password));
+            .add("/settings/password", post(users::change_password))
+            .add("/settings/appearance", post(users::update_appearance));
 
         let setup_routes = loco_rs::controller::Routes::new()
             .add("/setup", get(setup::wizard_form).post(setup::wizard_submit));
@@ -319,7 +320,7 @@ async fn error_pages_middleware(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let theme = extract_theme(req.headers()).unwrap_or_default().as_str();
+    let appearance = CurrentTheme::from_headers(req.headers());
     let view_engine = req.extensions().get::<ViewEngine<TeraView>>().cloned();
     let response = next.run(req).await;
 
@@ -352,13 +353,9 @@ async fn error_pages_middleware(
         _ => "errors/500.html",
     };
 
-    let html = match engine.0.render(
-        template,
-        json!({
-            "theme": theme,
-            "current_user": None::<crate::models::_entities::users::Model>,
-        }),
-    ) {
+    let mut context = appearance.context();
+    context["current_user"] = json!(None::<crate::models::_entities::users::Model>);
+    let html = match engine.0.render(template, context) {
         Ok(h) => h,
         Err(_) => return response,
     };

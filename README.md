@@ -17,8 +17,8 @@ expect breaking changes before 1.0.
   link posts, voting, editing and deleting. Moderators can pin, lock and
   remove posts and remove comments.
 - **User profiles** with their own posts, and follow / unfollow.
-- **Three themes** (light, dark, sepia) kept in a cookie, no JavaScript
-  framework. The UI is server-rendered Tera templates plus HTMX.
+- **Three themes** (light, dark, sepia) and a custom accent colour, saved
+  per account, no JavaScript framework. The UI is server-rendered Tera templates plus HTMX.
 - **First-run setup wizard** at `/setup` that names the instance and creates
   the first admin.
 - **Admin dashboard** at `/admin`: ban, suspend, unsuspend and force-verify

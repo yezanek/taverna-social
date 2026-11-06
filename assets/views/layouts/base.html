@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Taverna{% endblock %}</title>
   <link rel="stylesheet" href="/static/theme.css">
+  {% if accent_css %}<style>{{ accent_css | safe }}</style>{% endif %}
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>

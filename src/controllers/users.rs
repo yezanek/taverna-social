@@ -8,12 +8,15 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::instrument;
 
+use crate::common::accent::Rgb;
 use crate::common::config::TavernaConfig;
 use crate::common::markdown::render_markdown;
 use crate::controllers::csrf;
+use crate::controllers::theme::{accent_cookie, theme_cookie};
 use crate::federation::{self, outbound, traits::DbUser};
 use crate::initializers::auth_middleware::{AuthUser, OptionalAuthUser};
 use crate::initializers::content_negotiation::RenderMode;
+use crate::initializers::theme_middleware::Theme;
 use crate::models::comments::CommentModel;
 use crate::models::feed::CursorQuery;
 use crate::models::follows::Entity as FollowEntity;
@@ -51,6 +54,19 @@ pub struct SettingsForm {
     pub bio: Option<String>,
     pub avatar_url: Option<String>,
     pub email: Option<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
+}
+
+/// Form data for the appearance settings. `accent_reset` is set by the
+/// "Reset to default" button.
+#[derive(Debug, Deserialize)]
+pub struct AppearanceForm {
+    pub theme: String,
+    #[serde(default)]
+    pub accent: Option<String>,
+    #[serde(default)]
+    pub accent_reset: Option<String>,
     #[serde(default)]
     pub csrf_token: Option<String>,
 }
@@ -397,9 +413,60 @@ pub async fn settings_form(
             "email": user_email,
             "eligibility": eligibility,
             "csrf_token": csrf_token,
+            "saved_theme": user.theme.as_deref().and_then(Theme::parse).unwrap_or_default().as_str(),
+            "saved_accent": user.accent_color,
+            "default_accent": DEFAULT_ACCENT_SWATCH,
         }),
     )?;
     Ok((jar.add(csrf_cookie), response).into_response())
+}
+
+/// What the colour input shows when no custom accent is saved (the amber
+/// of the built-in themes; a `<input type="color">` always needs a value).
+const DEFAULT_ACCENT_SWATCH: &str = "#d9782a";
+
+/// `POST /settings/appearance`: saves the default theme and accent colour to
+/// the account and applies them to this browser's cookies at once.
+#[instrument(skip(ctx, current_user, form, jar, headers, taverna))]
+pub async fn update_appearance(
+    State(ctx): State<AppContext>,
+    AuthUser(current_user): AuthUser,
+    jar: CookieJar,
+    Extension(taverna): Extension<TavernaConfig>,
+    headers: HeaderMap,
+    Form(form): Form<AppearanceForm>,
+) -> Result<Response> {
+    if !csrf::validate(&jar, form.csrf_token.as_deref(), &headers, &taverna) {
+        return Err(invalid_csrf());
+    }
+    let theme =
+        Theme::parse(&form.theme).ok_or_else(|| Error::BadRequest("Unknown theme".to_string()))?;
+    // The colour input always submits a value; the default swatch means
+    // "no custom accent", so saving the form untouched keeps the default.
+    let accent =
+        if form.accent_reset.is_some() {
+            None
+        } else {
+            match form
+                .accent
+                .as_deref()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+            {
+                None => None,
+                Some(value) => Some(Rgb::parse(value).ok_or_else(|| {
+                    Error::BadRequest("Accent must be a #rrggbb colour".to_string())
+                })?),
+            }
+            .filter(|rgb| rgb.to_hex() != DEFAULT_ACCENT_SWATCH)
+        };
+
+    UserModel::update_appearance(&ctx.db, current_user.id, Some(theme), accent)
+        .await
+        .map_err(Error::wrap)?;
+
+    let jar = jar.add(theme_cookie(theme)).add(accent_cookie(accent));
+    Ok((jar, format::redirect("/settings")).into_response())
 }
 
 /// Updates user profile settings (display name, bio, avatar, email).
