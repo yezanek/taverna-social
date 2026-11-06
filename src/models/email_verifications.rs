@@ -67,3 +67,48 @@ pub async fn verify(db: &DatabaseConnection, token: &str) -> Result<VerifyOutcom
     txn.commit().await?;
     Ok(VerifyOutcome::Verified)
 }
+
+/// Hand-written so `Debug` output never carries the single-use verification
+/// token, which would let anyone reading logs verify the address (issue #36).
+impl std::fmt::Debug for email_verifications::Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::common::redact::Redacted;
+        let email_verifications::Model {
+            id,
+            user_id,
+            token: _,
+            expires_at,
+            verified_at,
+            created_at,
+        } = self;
+        f.debug_struct("Model")
+            .field("id", id)
+            .field("user_id", user_id)
+            .field("token", &Redacted)
+            .field("expires_at", expires_at)
+            .field("verified_at", verified_at)
+            .field("created_at", created_at)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod debug_redaction_tests {
+    use super::email_verifications;
+
+    #[test]
+    fn debug_hides_token() {
+        let now = chrono::Utc::now().fixed_offset();
+        let v = email_verifications::Model {
+            id: uuid::Uuid::nil(),
+            user_id: uuid::Uuid::nil(),
+            token: "SECRET-TOKEN".into(),
+            expires_at: now,
+            verified_at: None,
+            created_at: now,
+        };
+        let out = format!("{v:?}");
+        assert!(!out.contains("SECRET-TOKEN"), "token leaked in {out}");
+        assert!(out.contains("token: [redacted]"));
+    }
+}
