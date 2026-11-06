@@ -427,7 +427,7 @@ const DEFAULT_ACCENT_SWATCH: &str = "#d9782a";
 
 /// `POST /settings/appearance`: saves the default theme and accent colour to
 /// the account and applies them to this browser's cookies at once.
-#[instrument(skip(ctx, form, jar, headers, taverna))]
+#[instrument(skip(ctx, current_user, form, jar, headers, taverna))]
 pub async fn update_appearance(
     State(ctx): State<AppContext>,
     AuthUser(current_user): AuthUser,

@@ -251,12 +251,13 @@ mod tests {
         assert_eq!(user.accent_color, None);
 
         // Saving with the untouched default swatch keeps the default accent.
-        post_appearance(
+        let resp = post_appearance(
             &request,
             &cookies,
             serde_json::json!({"theme": "light", "accent": "#d9782a"}),
         )
         .await;
+        assert_eq!(resp.status_code(), 303);
         let user = UserModel::find_by_id(&ctx.db, id).await.unwrap().unwrap();
         assert_eq!(user.accent_color, None);
     }
