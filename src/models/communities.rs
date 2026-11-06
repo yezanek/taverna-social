@@ -305,3 +305,77 @@ impl CommunityModel {
         Ok(community.update(db).await?)
     }
 }
+
+/// Hand-written so `Debug` output never carries the community's private
+/// signing key (issue #36). The destructuring makes a new column a compile
+/// error here, so each one gets a decision.
+impl std::fmt::Debug for communities::Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::common::redact::RedactedOption;
+        let communities::Model {
+            id,
+            slug,
+            name,
+            description,
+            ap_id,
+            public_key,
+            private_key,
+            inbox_url,
+            followers_url,
+            is_local,
+            is_nsfw,
+            posting_restricted,
+            last_fetched_at,
+            created_at,
+            updated_at,
+        } = self;
+        f.debug_struct("Model")
+            .field("id", id)
+            .field("slug", slug)
+            .field("name", name)
+            .field("description", description)
+            .field("ap_id", ap_id)
+            .field("public_key", public_key)
+            .field("private_key", &RedactedOption(private_key))
+            .field("inbox_url", inbox_url)
+            .field("followers_url", followers_url)
+            .field("is_local", is_local)
+            .field("is_nsfw", is_nsfw)
+            .field("posting_restricted", posting_restricted)
+            .field("last_fetched_at", last_fetched_at)
+            .field("created_at", created_at)
+            .field("updated_at", updated_at)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod debug_redaction_tests {
+    use super::communities;
+
+    #[test]
+    fn debug_hides_private_key() {
+        let now = chrono::Utc::now().fixed_offset();
+        let community = communities::Model {
+            id: uuid::Uuid::nil(),
+            slug: "rust".into(),
+            name: "Rust".into(),
+            description: None,
+            ap_id: "https://example.com/c/rust".into(),
+            public_key: "PUBLIC-KEY".into(),
+            private_key: Some("-----BEGIN PRIVATE KEY----- SECRET-KEY".into()),
+            inbox_url: "https://example.com/c/rust/inbox".into(),
+            followers_url: "https://example.com/c/rust/followers".into(),
+            is_local: true,
+            is_nsfw: false,
+            posting_restricted: false,
+            last_fetched_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let out = format!("{community:?}");
+        assert!(!out.contains("SECRET-KEY"), "private key leaked in {out}");
+        assert!(out.contains("private_key: Some([redacted])"));
+        assert!(out.contains("PUBLIC-KEY"));
+    }
+}

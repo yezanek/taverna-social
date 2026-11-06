@@ -51,7 +51,7 @@ pub struct UserModel;
 
 impl UserModel {
     /// Creates a new local user with hashed password, keypair, and AP IDs.
-    #[instrument(skip(db, password))]
+    #[instrument(skip(db, email, password))]
     pub async fn create_local(
         db: &DatabaseConnection,
         username: &str,
@@ -129,7 +129,7 @@ impl UserModel {
     }
 
     /// Finds a user by their email address.
-    #[instrument(skip(db))]
+    #[instrument(skip(db, email))]
     pub async fn find_by_email(
         db: &DatabaseConnection,
         email: &str,
@@ -271,7 +271,7 @@ impl UserModel {
 
     /// Updates a user's email address, checking for duplicates. Returns true
     /// when the address changed (and so needs verifying again).
-    #[instrument(skip(db))]
+    #[instrument(skip(db, email))]
     pub async fn update_email(
         db: &DatabaseConnection,
         user_id: uuid::Uuid,
@@ -478,5 +478,111 @@ impl UserModel {
         })
         .await
         .unwrap_or(false)
+    }
+}
+
+/// Hand-written so `#[instrument]` spans and other `Debug` output never carry
+/// the password hash, private key or email (issue #36). The destructuring
+/// makes a new column a compile error here, so each one gets a decision.
+impl std::fmt::Debug for users::Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::common::redact::RedactedOption;
+        let users::Model {
+            id,
+            username,
+            email,
+            password_hash,
+            display_name,
+            bio,
+            avatar_url,
+            ap_id,
+            public_key,
+            private_key,
+            is_local,
+            is_admin,
+            is_banned,
+            email_verified,
+            standing_score,
+            suspended_at,
+            inbox_url,
+            shared_inbox_url,
+            followers_url,
+            last_fetched_at,
+            created_at,
+            updated_at,
+            theme,
+            accent_color,
+        } = self;
+        f.debug_struct("Model")
+            .field("id", id)
+            .field("username", username)
+            .field("email", &RedactedOption(email))
+            .field("password_hash", &RedactedOption(password_hash))
+            .field("display_name", display_name)
+            .field("bio", bio)
+            .field("avatar_url", avatar_url)
+            .field("ap_id", ap_id)
+            .field("public_key", public_key)
+            .field("private_key", &RedactedOption(private_key))
+            .field("is_local", is_local)
+            .field("is_admin", is_admin)
+            .field("is_banned", is_banned)
+            .field("email_verified", email_verified)
+            .field("standing_score", standing_score)
+            .field("suspended_at", suspended_at)
+            .field("inbox_url", inbox_url)
+            .field("shared_inbox_url", shared_inbox_url)
+            .field("followers_url", followers_url)
+            .field("last_fetched_at", last_fetched_at)
+            .field("created_at", created_at)
+            .field("updated_at", updated_at)
+            .field("theme", theme)
+            .field("accent_color", accent_color)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod debug_redaction_tests {
+    use super::users;
+
+    #[test]
+    fn debug_hides_password_hash_private_key_and_email() {
+        let now = chrono::Utc::now().fixed_offset();
+        let user = users::Model {
+            id: uuid::Uuid::nil(),
+            username: "alice".into(),
+            email: Some("alice-secret@example.com".into()),
+            password_hash: Some("$argon2id$SECRET-HASH".into()),
+            display_name: None,
+            bio: None,
+            avatar_url: None,
+            ap_id: "https://example.com/u/alice".into(),
+            public_key: "PUBLIC-KEY".into(),
+            private_key: Some("-----BEGIN PRIVATE KEY----- SECRET-KEY".into()),
+            is_local: true,
+            is_admin: false,
+            is_banned: false,
+            email_verified: true,
+            standing_score: 0,
+            suspended_at: None,
+            inbox_url: "https://example.com/u/alice/inbox".into(),
+            shared_inbox_url: None,
+            followers_url: "https://example.com/u/alice/followers".into(),
+            last_fetched_at: None,
+            created_at: now,
+            updated_at: now,
+            theme: None,
+            accent_color: None,
+        };
+        let out = format!("{user:?}");
+        for secret in ["alice-secret@example.com", "SECRET-HASH", "SECRET-KEY"] {
+            assert!(!out.contains(secret), "{secret} leaked in {out}");
+        }
+        assert!(out.contains("alice"));
+        assert!(out.contains("PUBLIC-KEY"));
+        assert!(out.contains(r#"password_hash: Some([redacted])"#));
+        // `{:#?}` goes through the same impl.
+        assert!(!format!("{user:#?}").contains("SECRET-HASH"));
     }
 }

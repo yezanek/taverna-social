@@ -70,7 +70,7 @@ taverna-social/
 ### Rust
 - Use `async/await` everywhere. This is an async application.
 - Prefer `anyhow::Error` for application-level errors, specific error types for library boundaries.
-- Use `tracing::instrument` on all controller and worker functions.
+- Use `tracing::instrument` on all controller and worker functions. `skip` arguments that hold secrets or personal data (passwords, emails, tokens). Models that hold secrets (`users`, `communities`, `email_verifications`) have hand-written `Debug` impls that print `[redacted]`; keep them that way and do not re-derive `Debug` on those entities.
 - All database queries go through SeaORM — never write raw SQL strings in Rust code (migrations are the exception).
 - Derive `Debug`, `Clone`, `Serialize`, `Deserialize` on all data structs.
 
